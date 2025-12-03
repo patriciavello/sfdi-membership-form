@@ -1,0 +1,287 @@
+require('dotenv').config();
+const express = require('express');
+const bodyParser = require('body-parser');
+const nodemailer = require('nodemailer');
+const cors = require('cors');
+const PDFDocument = require('pdfkit'); // <-- NEW
+const multer = require('multer'); // <-- NEW
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+
+// Change this to the official SFDI address
+const SFDI_EMAIL = process.env.SFDI_EMAIL;
+
+
+// Multer: store uploads in memory
+const upload = multer({ storage: multer.memoryStorage() });
+
+// ----- SMTP CONFIGURATION (GMAIL + APP PASSWORD) -----
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
+
+// test SMTP
+transporter.verify((error, success) => {
+  if (error) {
+    console.log('SMTP verification error:', error);
+  } else {
+    console.log('SMTP server is ready to take our messages');
+  }
+});
+
+app.use(cors());
+app.use(bodyParser.json());
+app.use(express.static(__dirname)); // serves index.html, etc.
+
+// Helper: format date yyyy-mm-dd -> mm/dd/yyyy
+function formatDate(dateStr) {
+  if (!dateStr) return '_____________________';
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr;
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  return `${mm}/${dd}/${yyyy}`;
+}
+
+// 1) Build the filled-in contract text (replacing the ____ fields)
+function buildContractText(data) {
+  const memberName = data.memberPrintName || data.name || '___________________________';
+  const certSince = formatDate(data.certDate);
+  const certAgency = data.certAgency || '___________________________';
+  const certNumber = data.certCardNumber || '___________________________';
+  const certLevel = data.certLevel || '___________________________';
+
+  return `
+SOUTH FLORIDA DIVERS, INC.
+Yearly Membership Agreement & Complete Liability Release
+
+Section 1
+Paragraph 1.01
+This is a membership agreement between ${memberName} (member) and the South
+Florida Divers, Inc. - Club. It is my intention by signing this document to be contractually
+bound by its provisions, particularly those related to release of liability.
+
+Paragraph 1.02
+The following terms will apply to this document. The term member will apply to the applicant as
+stated Section 1. Paragraph 1.01. The term club will apply to South Florida Divers, Inc. The term
+members will apply to all other potential members of South Florida Divers, Inc. The term coordinator
+will refer to any of the club members who conduct or organize an event. The term sponsor refers to
+the act or process of organizing, promoting and conducting activities that have been approved by the
+club. The term E-Board refers to the members that have been elected to the executive board of
+director of the club.
+
+Section 2
+Paragraph 2.01
+I, the member, state that I have been a certified scuba diver since ${certSince}.
+My certification was granted by the ${certAgency} certifying agency which
+assigned certification number ${certNumber}. My highest level of training
+certification is ${certLevel}.
+
+Paragraph 2.02
+I, the member, agree that I'm responsible for my own actions and state that at no time will I
+knowingly or willfully endanger myself or other members or guests of the club during any diving or
+non-diving related event that the club may sponsor. I acknowledge that by signing this document I
+exempt and release South Florida Divers, Inc., its members, agents, E-Board, and all vessels (whether
+owned, operated, leased or chartered by any member or members of the club) and hold these
+entities harmless from any and all liabilities which may arise as a consequence of any acts or
+omissions on their part, including, but not limited to negligence, or gross negligence of any released
+party for any dive related activities, including but not limited to getting on and off vessels, ladder
+related injuries, and other activities including those which are incidental to scuba diving, snorkeling
+and boating.
+
+Paragraph 2.03
+I, the member, through my scuba diving training, have been informed that diving is a dangerous
+activity which may result in property damage, personal injury or even death should I not follow all of
+the proper diving procedures which I have been trained through my certification agency as indicated
+in Section 2, Paragraph 2.01.
+
+Paragraph 2.04
+I expressly assume all risk of injury and will indemnify and hold harmless the Club, E-Board for any
+claims.
+
+Paragraph 2.05
+I, the member, specifically and expressly release the club from any liability related to my personal
+injury during any event that the club may sponsor.
+
+Paragraph 2.06
+I, the member, release the coordinator from any obligation for my personal safety or personal injury
+during any event that the club may sponsor.
+
+Paragraph 2.07
+I, the member, release the E-Board from any obligation for my personal safety or personal injury
+during any event that the club may sponsor.
+
+Paragraph 2.08
+I, the member, understand that a current dive insurance policy, on file with the club, is mandatory for
+anyone going on club sponsored dives. The club does not in any way provide or sanction any
+individual diving insurance company.
+
+Paragraph 2.09
+In consideration for being permitted to participate in the club membership and/or club activities, I
+specifically and expressly relinquish my right to bring any type of legal action against the club, its E-
+board, members, vessels and other participants, for any and all damages to property and personal
+injury including death, whether caused by negligence, gross negligence, or otherwise.
+
+Section 3
+Paragraph 3.01
+I, the member, understand that my yearly membership is a privilege that can be revoked at any time
+by a majority vote of the E-Board, should my conduct be deemed inappropriate of a member of the
+club.
+
+Paragraph 3.02
+I, the member, understand that my membership is to be renewed yearly effective January 2nd, and
+becomes delinquent if not paid by the conclusion of the scheduled February general meeting.
+
+Paragraph 3.03
+I, the member, understand that a $5.00 reinstatement fee will be added to the normal membership
+renewal fee for any membership application received after the conclusion of the February general
+meeting.
+
+Section 4
+Paragraph 4.01
+I, the member, have read this agreement in its entirety and agree to be bound by same.
+
+THE LIABILITY ASPECT PORTION OF THIS AGREEMENT IS SPECIFICALLY INTENDED TO BE BINDING AS A
+COMPLETE BAR TO LITIGATION.
+
+Member Name (printed): ${memberName}
+Member Signature: ${data.memberSignature || '___________________________'}
+Date: ${formatDate(data.signatureDate)}
+
+Under 18: ${data.under18 || 'No'}
+Parent/Guardian Name (printed): ${data.guardianPrintName || '___________________________'}
+Parent/Guardian Signature: ${data.guardianSignature || '___________________________'}
+`;
+}
+
+// 2) Generate a PDF buffer from that text
+function generateContractPdf(data) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50 });
+    const chunks = [];
+
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    // Title
+    doc.fontSize(16).text('SOUTH FLORIDA DIVERS, INC.', { align: 'center' });
+    doc.moveDown(0.5);
+    doc.fontSize(14).text('Yearly Membership Agreement & Complete Liability Release', { align: 'center' });
+    doc.moveDown();
+
+    // Basic info header
+    doc.fontSize(11).text(`Member: ${data.memberPrintName || data.name || ''}`);
+    doc.text(`Email: ${data.email || ''}`);
+    doc.text(`Phone(s): ${data.phones || ''}`);
+    doc.text(`DOB: ${formatDate(data.dob)}`);
+    doc.moveDown();
+
+    // Full contract text
+    doc.fontSize(11).text(buildContractText(data), {
+      align: 'left'
+    });
+
+    doc.end();
+  });
+}
+
+// Route to handle form submission WITH FILES
+app.post(
+    '/submit-membership',
+    upload.fields([
+      { name: 'certFile', maxCount: 1 },
+      { name: 'insuranceFile', maxCount: 1 }
+    ]),
+    async (req, res) => {
+      const data = req.body; // text fields
+      const files = req.files || {};
+  
+      if (!data.email) {
+        return res.status(400).json({ error: 'Member email is required.' });
+      }
+  
+      try {
+        const pdfBuffer = await generateContractPdf(data);
+        const filenameSafeName = (data.memberPrintName || data.name || 'Member')
+          .replace(/[^a-z0-9]/gi, '_');
+  
+        const emailText = `
+  SFDI Membership form submitted.
+  
+  Member: ${data.memberPrintName || data.name}
+  Email: ${data.email}
+  Phone(s): ${data.phones}
+  
+  A PDF copy of the signed membership agreement is attached.
+  Uploaded documents:
+  - Dive Certification Card: ${files.certFile ? files.certFile[0].originalname : 'none'}
+  - Proof of Dive Insurance: ${files.insuranceFile ? files.insuranceFile[0].originalname : 'none'}
+  `;
+  
+        // Build attachments array
+        const attachmentsForClub = [
+          {
+            filename: `SFDI-Membership-${filenameSafeName}.pdf`,
+            content: pdfBuffer
+          }
+        ];
+  
+        if (files.certFile && files.certFile[0]) {
+          attachmentsForClub.push({
+            filename: files.certFile[0].originalname || 'DiveCertification',
+            content: files.certFile[0].buffer
+          });
+        }
+  
+        if (files.insuranceFile && files.insuranceFile[0]) {
+          attachmentsForClub.push({
+            filename: files.insuranceFile[0].originalname || 'DiveInsurance',
+            content: files.insuranceFile[0].buffer
+          });
+        }
+  
+        // Email to SFDI (with all attachments)
+        const mailToClub = {
+          from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+          to: SFDI_EMAIL,
+          subject: `New Membership Form: ${data.memberPrintName || data.name || 'Unknown Member'}`,
+          text: emailText,
+          attachments: attachmentsForClub
+        };
+  
+        // Email to member (PDF only; you can also attach files if you want)
+        const mailToMember = {
+          from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+          to: data.email,
+          subject: 'Your SFDI Membership Agreement (PDF)',
+          text: 'Thank you for your membership. Your completed agreement is attached as a PDF.',
+          attachments: [
+            {
+              filename: `SFDI-Membership-${filenameSafeName}.pdf`,
+              content: pdfBuffer
+            }
+          ]
+        };
+  
+        await transporter.sendMail(mailToClub);
+        await transporter.sendMail(mailToMember);
+  
+        res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });
+      } catch (err) {
+        console.error('Error sending email:', err);
+        res.status(500).json({ error: 'There was an error sending the email with the PDF and attachments.' });
+      }
+    }
+  );
+  
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });

@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>South Florida Divers – Membership Agreement</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    h1, h2, h3 {
+      text-align: center;
+    }
+    form {
+      background: #fff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 0 6px rgba(0,0,0,0.1);
+    }
+    fieldset {
+      border: 1px solid #ccc;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+    legend {
+      font-weight: bold;
+      padding: 0 6px;
+    }
+    label {
+      display: block;
+      margin-top: 8px;
+      font-size: 0.95rem;
+    }
+    input[type="text"],
+    input[type="email"],
+    input[type="date"],
+    input[type="number"],
+    textarea {
+      width: 100%;
+      padding: 6px 8px;
+      margin-top: 3px;
+      box-sizing: border-box;
+    }
+    .inline-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 20px;
+      align-items: center;
+    }
+    .inline-group label {
+      display: inline-block;
+      margin-top: 0;
+    }
+    .inline-radio {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .inline-radio label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .small-text {
+      font-size: 0.85rem;
+      color: #555;
+    }
+    .legal-box {
+      background: #fafafa;
+      border: 1px solid #ddd;
+      padding: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 1rem;
+      border: none;
+      border-radius: 4px;
+      background: #0066cc;
+      color: white;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .message {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 4px;
+    }
+    .success {
+      background: #e6ffed;
+      border: 1px solid #77c080;
+    }
+    .error {
+      background: #ffe6e6;
+      border: 1px solid #e38b8b;
+    }
+  </style>
+</head>
+<body>
+  <h1>SOUTH FLORIDA DIVERS, INC.</h1>
+  <h2>Yearly Membership Agreement & Complete Liability Release</h2>
+
+  <form id="membershipForm">
+    <!-- Membership section -->
+    <fieldset>
+      <legend>Membership</legend>
+
+      <div class="inline-group">
+        <label>Application Type:</label>
+        <div class="inline-radio">
+          <label><input type="radio" name="applicationType" value="NEW" required> NEW</label>
+          <label><input type="radio" name="applicationType" value="RENEWAL"> RENEWAL</label>
+        </div>
+      </div>
+
+      <div class="inline-group">
+        <label>Membership Type:</label>
+        <div class="inline-radio">
+          <label><input type="radio" name="membershipType" value="SINGLE" required> SINGLE</label>
+          <label><input type="radio" name="membershipType" value="FAMILY"> FAMILY</label>
+        </div>
+      </div>
+
+      <div class="inline-group">
+        <label>Payment:</label>
+        <div class="inline-radio">
+          <label><input type="radio" name="paymentMethod" value="CASH" required> CASH</label>
+          <label><input type="radio" name="paymentMethod" value="CHECK"> CHECK</label>
+          <label><input type="radio" name="paymentMethod" value="PAYPAL"> PAYPAL</label>
+        </div>
+        <label>
+          Amount (USD):
+          <input type="number" step="0.01" name="paymentAmount" placeholder="70.00 / 100.00" required>
+        </label>
+      </div>
+    </fieldset>
+
+    <!-- Diver’s Information -->
+    <fieldset>
+      <legend>Diver’s Information</legend>
+
+      <label>
+        Name:
+        <input type="text" name="name" required>
+      </label>
+
+      <label>
+        Address (line 1):
+        <input type="text" name="address1" required>
+      </label>
+
+      <label>
+        Address (line 2):
+        <input type="text" name="address2">
+      </label>
+
+      <label>
+        City, State, Zip:
+        <input type="text" name="cityStateZip" required>
+      </label>
+
+      <label>
+        Email Address (used to receive a copy of this form):
+        <input type="email" name="email" required>
+      </label>
+
+      <label>
+        May we publish phone and email to club members?
+        <div class="inline-radio">
+          <label><input type="radio" name="publishContact" value="Yes" required> Yes</label>
+          <label><input type="radio" name="publishContact" value="No"> No</label>
+        </div>
+      </label>
+
+      <label>
+        Phone(s):
+        <input type="text" name="phones" required>
+      </label>
+
+      <label>
+        Date of Birth:
+        <input type="date" name="dob" required>
+      </label>
+    </fieldset>
+
+    <!-- Diver Certification Information -->
+    <fieldset>
+      <legend>Diver Certification Information</legend>
+
+      <label>
+        Agency:
+        <input type="text" name="certAgency" required>
+      </label>
+
+      <label>
+        Level (Open Water, Advanced, Rescue, Divemaster, etc):
+        <input type="text" name="certLevel" required>
+      </label>
+
+      <label>
+        Card Number:
+        <input type="text" name="certCardNumber" required>
+      </label>
+
+      <label>
+        Certification Date:
+        <input type="date" name="certDate" required>
+      </label>
+
+      <label>
+        Medical Problems, if any:
+        <textarea name="medicalProblems" rows="3"></textarea>
+      </label>
+
+      <p class="small-text">
+        PLEASE ATTACH A COPY OF YOUR MOST CURRENT DIVE CERTIFICATION CARD (you can email or upload separately as instructed by the club).
+      </p>
+
+
+      <!-- Dive certification file upload -->
+      <label>
+        Upload Dive Certification Card:
+        <input type="file" name="certFile" accept="image/*,application/pdf">
+      </label>
+    </fieldset>
+
+    </fieldset>
+
+    <!-- Diving Insurance -->
+    <fieldset>
+      <legend>Diving Insurance</legend>
+
+      <label>
+        Carrier:
+        <input type="text" name="insuranceCarrier" required>
+      </label>
+
+      <label>
+        Type:
+        <input type="text" name="insuranceType" required>
+      </label>
+
+      <p class="small-text">
+        PLEASE ATTACH PROOF OF DIVE INSURANCE (you can email or upload separately as instructed by the club).
+      </p>
+      <!-- NEW: insurance proof file upload -->
+      <label>
+        Upload Proof of Dive Insurance:
+        <input type="file" name="insuranceFile" accept="image/*,application/pdf">
+      </label>
+    </fieldset>
+
+    <!-- Liability text + agreement -->
+    <fieldset>
+      <legend>Liability Release & Membership Agreement</legend>
+
+      <p class="small-text">
+        Please read the complete agreement below before signing. This is intended to mirror the text from the printed form.
+      </p>
+
+      <div class="legal-box">
+        <!-- Paste the full agreement text from pages 2–4 of your PDF here -->
+        SOUTH FLORIDA DIVERS, INC.
+        Yearly Membership Agreement & Complete Liability Release
+
+        Section 1
+Paragraph 1.01
+This is a membership agreement between___________________________ (member) and the South
+Florida Divers, Inc. - Club. It is my intention by signing this document to be contractually bound by its
+provisions, particularly those related to release of liability.
+Paragraph 1.02
+The following terms will apply to this document. The term member will apply to the applicant as
+stated Section 1. Paragraph 1.01. The term club will apply to South Florida Divers, Inc. The term
+members will apply to all other potential members of South Florida Divers, Inc. The term coordinator
+will refer to any of the club members who conduct or organize an event. The term sponsor refers to
+the act or process of organizing, promoting and conducting activities that have been approved by the
+club. The term E - Board refers to the members that have been elected to the executive board of
+director of the club.
+
+    Section 2
+Paragraph 2.01
+I, the member, state that I have been a certified scuba diver since_____________________
+My certification was granted by the ___________________________certifying agency which
+assigned certification number _________________________. My highest level of training
+certification is __________________.
+Paragraph 2.02
+I, the member, agree that I'm responsible for my own actions and state that at no time will I
+knowingly or willfully endanger myself or other members or guest of the club during any diving or
+non-diving related event that the club may sponsor. I acknowledge that by signing this document I
+exempt and release South Florida Divers, Inc., its members, agents, E - Board, and all vessels (whether
+owned, operated, leased or chartered by any member or members of the club) and to hold these
+entities harmless from any and all liabilities which may arise as a consequence of any acts or
+omissions on their part, including, but not limited to negligence, or gross negligence of any released
+party for any dive related activities, including but not limited to getting on and off vessels, ladder
+related injuries, and other activities including those which are incidental to scuba diving, snorkeling
+and boating.
+Paragraph 2.03
+I, the member, through my scuba diving training, have been informed that diving is a dangerous
+activity which may result in property damage, personal injury or even death should I not follow all of
+the proper diving procedures which I have been trained through my certification agency as indicated
+in Section 2, Paragraph 2.01.
+Paragraph 2.04
+I, expressly assume all risk of injury and will indemnify and hold harmless the Club, E-Board for any
+claims.
+Paragraph 2.05
+I, the member, specifically and expressly release the club from any liability related to my personal
+injury during any event that the club may sponsor.
+Paragraph 2.06
+I, the member, release the coordinator from any obligation for my personal safety or personal injury
+during any event that the club may sponsor.
+Paragraph 2.07
+I, the member, release the E-Board from any obligation for my personal safety or personal injury
+during any event that the club may sponsor.
+Paragraph 2.08
+J, the member, understand that a current dive insurance policy, on file with the club, is mandatory for
+anyone going on club sponsored dives. The club does not in any way provide or sanction any
+individual diving insurance company.
+Paragraph 2.09
+In consideration for being permitted to participate in the club membership and/or club activities, I
+specifically and expressly relinquish my right to bring any type of legal action against the club, its E-
+board, members, vessels and other participants, for any and all damages to property and personal
+injury including death, whether caused by negligence, gross negligence, or otherwise.
+
+    Section 3
+Paragraph 3.01
+l, the member, understand that my yearly membership is a privilege that can be revoked at any time
+by a majority vote of the E - Board, should my conduct be deemed inappropriate of a member of the
+club.
+Paragraph 3.02
+1, the member, understand that my membership is to be renewed yearly effective January 2nd, and
+becomes delinquent if not paid by the conclusion of the scheduled February general meeting.
+Paragraph 3.03
+L the member, understand that a $5.00 reinstatement fee will be added to the normal membership
+renewal fee for any membership application received after the conclusion of the February general
+meeting.
+Section 4
+Paragraph 4.01
+I, the member, have read this agreement in its entirety and agree to be bound by same.
+
+THE LIABILITY ASPECT PORTION OF THIS AGREEMENT IS SPECIFICALLY INTENDED TO BE BINDING AS A
+COMPLETE BAR TO LITIGATION.
+      </div>
+
+      <label>
+        <input type="checkbox" name="agreeLiability" required>
+        I have read and agree to the Yearly Membership Agreement & Complete Liability Release.
+      </label>
+    </fieldset>
+
+    <!-- Signature -->
+    <fieldset>
+      <legend>Signature</legend>
+
+      <label>
+        Member Name (printed):
+        <input type="text" name="memberPrintName" required>
+      </label>
+
+      <label>
+        Member Signature (type your full legal name):
+        <input type="text" name="memberSignature" required>
+      </label>
+
+      <label>
+        Date:
+        <input type="date" name="signatureDate" required>
+      </label>
+
+      <label>
+        Is the member under 18?
+        <div class="inline-radio">
+          <label><input type="radio" name="under18" value="No" checked> No</label>
+          <label><input type="radio" name="under18" value="Yes"> Yes</label>
+        </div>
+      </label>
+
+      <div id="guardianSection" style="display:none; margin-top:10px;">
+        <label>
+          Parent/Guardian Name (printed):
+          <input type="text" name="guardianPrintName">
+        </label>
+
+        <label>
+          Parent/Guardian Signature (type full legal name):
+          <input type="text" name="guardianSignature">
+        </label>
+      </div>
+    </fieldset>
+
+    <button type="submit" id="submitBtn">Submit Membership Form</button>
+    <p class="small-text">
+        After submitting, you’ll receive a copy of this agreement by email as a PDF ready to print.
+    </p>
+      
+    <div id="formMessage" class="message" style="display:none;"></div>
+  </form>
+
+  <script>
+    // Show/hide guardian fields
+    const under18Radios = document.querySelectorAll('input[name="under18"]');
+    const guardianSection = document.getElementById('guardianSection');
+
+    under18Radios.forEach(radio => {
+      radio.addEventListener('change', function () {
+        if (this.value === 'Yes') {
+          guardianSection.style.display = 'block';
+        } else {
+          guardianSection.style.display = 'none';
+        }
+      });
+    });
+
+    // Handle form submit via fetch to backend
+    const membershipForm = document.getElementById('membershipForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const formMessage = document.getElementById('formMessage');
+
+    membershipForm.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      submitBtn.disabled = true;
+      formMessage.style.display = 'none';
+
+      // Use FormData directly (includes files)
+      const formData = new FormData(membershipForm);
+
+      try {
+        const response = await fetch('/submit-membership', {
+          method: 'POST',
+          body: formData // no Content-Type header, browser sets it
+        });
+
+        const result = await response.json();
+
+        formMessage.style.display = 'block';
+        if (response.ok) {
+          formMessage.className = 'message success';
+          formMessage.textContent = result.message || 'Form submitted successfully. Please check your email.';
+          membershipForm.reset();
+          guardianSection.style.display = 'none';
+        } else {
+          formMessage.className = 'message error';
+          formMessage.textContent = result.error || 'There was a problem submitting the form.';
+        }
+      } catch (err) {
+        formMessage.style.display = 'block';
+        formMessage.className = 'message error';
+        formMessage.textContent = 'Network error while submitting the form.';
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
