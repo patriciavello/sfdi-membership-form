@@ -63,7 +63,11 @@ async function initDb() {
         family_admin_email TEXT,
         cert_agency TEXT,
         cert_level TEXT,
-        phones TEXT
+        phones TEXT,
+        -- NEW ADMIN FIELDS
+        insurance_verified BOOLEAN DEFAULT FALSE,
+        payment_received BOOLEAN DEFAULT FALSE,
+        certification_verified BOOLEAN DEFAULT FALSE
       )
     `);
     console.log('PostgreSQL: submissions table is ready');
@@ -71,6 +75,7 @@ async function initDb() {
     console.error('Error initializing database:', err);
   }
 }
+
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -431,6 +436,7 @@ app.post(
     try {
       const result = await pool.query(
         `SELECT
+          id,  -- needed so we can update a specific row
           created_at,
           member_name,
           member_email,
@@ -443,10 +449,14 @@ app.post(
           family_admin_email,
           cert_agency,
           cert_level,
-          phones
+          phones,
+          insurance_verified,
+          payment_received,
+          certification_verified
         FROM submissions
         ORDER BY created_at DESC`
       );
+      
       rows = result.rows;
     } catch (err) {
       console.error('Error loading submissions from DB:', err);
@@ -480,8 +490,24 @@ app.post(
             <td>${sub.cert_agency || ''}</td>
             <td>${sub.cert_level || ''}</td>
             <td>${sub.phones || ''}</td>
+
+            <!-- NEW: Insurance verification (will make clickable later) -->
+            <td>${sub.insurance_verified ? '✅ Yes' : '❌ No'}</td>
+
+            <!-- NEW: Payment verification (read-only on standard admin page) -->
+            <td>
+              ${
+                Number(sub.payment_amount) > 0
+                  ? (sub.payment_received ? '✅ Received' : '❌ Not Confirmed')
+                  : 'N/A'
+              }
+            </td>
+
+            <!-- NEW: Certification verification (will make clickable later) -->
+            <td>${sub.certification_verified ? '✅ Yes' : '❌ No'}</td>
           </tr>
         `;
+
       })
       .join('');
   
@@ -556,8 +582,13 @@ app.post(
                 <th>Cert Agency</th>
                 <th>Cert Level</th>
                 <th>Phones</th>
+                <!-- NEW -->
+                <th>Insurance OK?</th>
+                <th>Payment Received?</th>
+                <th>Cert OK?</th>
               </tr>
             </thead>
+
             <tbody>
               ${tableRows}
             </tbody>
@@ -568,7 +599,7 @@ app.post(
     `);
   });
   
-
+  
   initDb();
 
   app.listen(PORT, () => {
