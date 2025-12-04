@@ -5,11 +5,14 @@ const nodemailer = require('nodemailer');
 const cors = require('cors');
 const PDFDocument = require('pdfkit'); // <-- NEW
 const multer = require('multer'); // <-- NEW
+const basicAuth = require('express-basic-auth'); // <-- NEW
+
+// In-memory store of submissions (resets on server restart)
+const submissions = []; // <-- NEW
+
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Change this to the official SFDI address
 const SFDI_EMAIL = process.env.SFDI_EMAIL
 
 // Multer: store uploads in memory
@@ -35,6 +38,20 @@ transporter.verify((error, success) => {
 
 app.use(cors());
 app.use(bodyParser.json());
+
+// Protect /admin with basic auth
+app.use(
+  '/admin',
+  basicAuth({
+    users: {
+      // username: password
+      admin: process.env.ADMIN_PASSWORD || 'changeme'
+    },
+    challenge: true,
+    realm: 'SFDI Admin Area'
+  })
+);
+
 app.use(express.static(__dirname)); // serves index.html, etc.
 
 // Helper: format date yyyy-mm-dd -> mm/dd/yyyy
@@ -255,8 +272,8 @@ app.post(
           });
         }
   
-        // Email to SFDI (with all attachments)
-const mailToClub = {
+  // Email to SFDI (with all attachments)
+  const mailToClub = {
     from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
     to: SFDI_EMAIL,
     subject: `New Membership Form: ${data.memberPrintName || data.name || 'Unknown Member'}`,
@@ -324,14 +341,147 @@ const mailToClub = {
     await transporter.sendMail(mailToFamilyAdmin);
   }
   
-  res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });
+  // Store submission in memory for admin dashboard
+  submissions.push({
+    timestamp: new Date().toISOString(),
+    name: data.memberPrintName || data.name || '',
+    email: data.email || '',
+    membershipType: data.membershipType || '',
+    applicationType: data.applicationType || '',
+    paymentMethod: data.paymentMethod || '',
+    paymentAmount: data.paymentAmount || '',
+    under18: data.under18 || 'No',
+    guardianEmail: data.guardianEmail || '',
+    familyAdminEmail: data.familyAdminEmail || '',
+    certAgency: data.certAgency || '',
+    certLevel: data.certLevel || '',
+    phones: data.phones || ''
+  });
   
-      } catch (err) {
+  res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });
+   
+ } catch (err) {
         console.error('Error sending email:', err);
         res.status(500).json({ error: 'There was an error sending the email with the PDF and attachments.' });
       }
     }
   );
+  
+  // Simple Admin Dashboard (protected by basic auth)
+app.get('/admin', (req, res) => {
+  let rows = submissions
+    .map(sub => {
+      const date = new Date(sub.timestamp).toLocaleString('en-US', {
+        timeZone: 'America/New_York'
+      });
+
+      return `
+        <tr>
+          <td>${date}</td>
+          <td>${sub.name}</td>
+          <td>${sub.email}</td>
+          <td>${sub.membershipType}</td>
+          <td>${sub.applicationType}</td>
+          <td>${sub.paymentMethod}</td>
+          <td>${sub.paymentAmount}</td>
+          <td>${sub.under18}</td>
+          <td>${sub.guardianEmail}</td>
+          <td>${sub.familyAdminEmail}</td>
+          <td>${sub.certAgency}</td>
+          <td>${sub.certLevel}</td>
+          <td>${sub.phones}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  if (!rows) {
+    rows = `<tr><td colspan="13" style="text-align:center;">No submissions yet.</td></tr>`;
+  }
+
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <title>SFDI Admin Dashboard</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          margin: 0;
+          padding: 20px;
+          background: #f5f5f5;
+        }
+        h1 {
+          text-align: center;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          background: #fff;
+          box-shadow: 0 0 6px rgba(0,0,0,0.1);
+        }
+        th, td {
+          border: 1px solid #ddd;
+          padding: 8px;
+          font-size: 0.85rem;
+        }
+        th {
+          background: #0066cc;
+          color: #fff;
+          position: sticky;
+          top: 0;
+        }
+        tr:nth-child(even) {
+          background: #f9f9f9;
+        }
+        .wrapper {
+          max-width: 1200px;
+          margin: 0 auto;
+        }
+        .meta {
+          margin-bottom: 15px;
+          font-size: 0.9rem;
+          color: #555;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="wrapper">
+        <h1>SFDI Membership Admin Dashboard</h1>
+        <p class="meta">
+          Logged in as <strong>${req.auth.user}</strong>. 
+          Showing ${submissions.length} submission(s) since last restart.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Submitted At</th>
+              <th>Member Name</th>
+              <th>Member Email</th>
+              <th>Membership Type</th>
+              <th>Application Type</th>
+              <th>Payment Method</th>
+              <th>Amount (USD)</th>
+              <th>Under 18?</th>
+              <th>Guardian Email</th>
+              <th>Family Admin Email</th>
+              <th>Cert Agency</th>
+              <th>Cert Level</th>
+              <th>Phones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
   
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
