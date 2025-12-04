@@ -6,6 +6,8 @@ const cors = require('cors');
 const PDFDocument = require('pdfkit'); // <-- NEW
 const multer = require('multer'); // <-- NEW
 const basicAuth = require('express-basic-auth'); // <-- NEW
+const { Pool } = require('pg');
+
 
 // In-memory store of submissions (resets on server restart)
 const submissions = []; // <-- NEW
@@ -14,6 +16,15 @@ const submissions = []; // <-- NEW
 const app = express();
 const PORT = process.env.PORT || 3000;
 const SFDI_EMAIL = process.env.SFDI_EMAIL
+
+// PostgreSQL connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL
+    ? { rejectUnauthorized: false } // needed for Render
+    : false
+});
+
 
 // Multer: store uploads in memory
 const upload = multer({ storage: multer.memoryStorage() });
@@ -35,6 +46,31 @@ transporter.verify((error, success) => {
     console.log('SMTP server is ready to take our messages');
   }
 });
+async function initDb() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS submissions (
+        id SERIAL PRIMARY KEY,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        member_name TEXT,
+        member_email TEXT,
+        membership_type TEXT,
+        application_type TEXT,
+        payment_method TEXT,
+        payment_amount NUMERIC(10,2),
+        under18 TEXT,
+        guardian_email TEXT,
+        family_admin_email TEXT,
+        cert_agency TEXT,
+        cert_level TEXT,
+        phones TEXT
+      )
+    `);
+    console.log('PostgreSQL: submissions table is ready');
+  } catch (err) {
+    console.error('Error initializing database:', err);
+  }
+}
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -341,25 +377,47 @@ app.post(
     await transporter.sendMail(mailToFamilyAdmin);
   }
   
-  // Store submission in memory for admin dashboard
-  submissions.push({
-    timestamp: new Date().toISOString(),
-    name: data.memberPrintName || data.name || '',
-    email: data.email || '',
-    membershipType: data.membershipType || '',
-    applicationType: data.applicationType || '',
-    paymentMethod: data.paymentMethod || '',
-    paymentAmount: data.paymentAmount || '',
-    under18: data.under18 || 'No',
-    guardianEmail: data.guardianEmail || '',
-    familyAdminEmail: data.familyAdminEmail || '',
-    certAgency: data.certAgency || '',
-    certLevel: data.certLevel || '',
-    phones: data.phones || ''
-  });
-  
+  // Store submission in PostgreSQL for admin dashboard
+  try {
+    await pool.query(
+      `
+        INSERT INTO submissions (
+          member_name,
+          member_email,
+          membership_type,
+          application_type,
+          payment_method,
+          payment_amount,
+          under18,
+          guardian_email,
+          family_admin_email,
+          cert_agency,
+          cert_level,
+          phones
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `,
+      [
+        data.memberPrintName || data.name || '',
+        data.email || '',
+        data.membershipType || '',
+        data.applicationType || '',
+        data.paymentMethod || '',
+        data.paymentAmount || 0,
+        data.under18 || 'No',
+        data.guardianEmail || '',
+        data.familyAdminEmail || '',
+        data.certAgency || '',
+        data.certLevel || '',
+        data.phones || ''
+      ]
+    );
+  } catch (dbErr) {
+    console.error('Error saving submission to DB:', dbErr);
+    // you *could* choose to still respond 200 here, since emails were sent
+  }
+
   res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });
-   
  } catch (err) {
         console.error('Error sending email:', err);
         res.status(500).json({ error: 'There was an error sending the email with the PDF and attachments.' });
@@ -368,121 +426,151 @@ app.post(
   );
   
   // Simple Admin Dashboard (protected by basic auth)
-app.get('/admin', (req, res) => {
-  let rows = submissions
-    .map(sub => {
-      const date = new Date(sub.timestamp).toLocaleString('en-US', {
-        timeZone: 'America/New_York'
-      });
-
-      return `
-        <tr>
-          <td>${date}</td>
-          <td>${sub.name}</td>
-          <td>${sub.email}</td>
-          <td>${sub.membershipType}</td>
-          <td>${sub.applicationType}</td>
-          <td>${sub.paymentMethod}</td>
-          <td>${sub.paymentAmount}</td>
-          <td>${sub.under18}</td>
-          <td>${sub.guardianEmail}</td>
-          <td>${sub.familyAdminEmail}</td>
-          <td>${sub.certAgency}</td>
-          <td>${sub.certLevel}</td>
-          <td>${sub.phones}</td>
-        </tr>
-      `;
-    })
-    .join('');
-
-  if (!rows) {
-    rows = `<tr><td colspan="13" style="text-align:center;">No submissions yet.</td></tr>`;
-  }
-
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8" />
-      <title>SFDI Admin Dashboard</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <style>
-        body {
-          font-family: Arial, sans-serif;
-          margin: 0;
-          padding: 20px;
-          background: #f5f5f5;
-        }
-        h1 {
-          text-align: center;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          background: #fff;
-          box-shadow: 0 0 6px rgba(0,0,0,0.1);
-        }
-        th, td {
-          border: 1px solid #ddd;
-          padding: 8px;
-          font-size: 0.85rem;
-        }
-        th {
-          background: #0066cc;
-          color: #fff;
-          position: sticky;
-          top: 0;
-        }
-        tr:nth-child(even) {
-          background: #f9f9f9;
-        }
-        .wrapper {
-          max-width: 1200px;
-          margin: 0 auto;
-        }
-        .meta {
-          margin-bottom: 15px;
-          font-size: 0.9rem;
-          color: #555;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="wrapper">
-        <h1>SFDI Membership Admin Dashboard</h1>
-        <p class="meta">
-          Logged in as <strong>${req.auth.user}</strong>. 
-          Showing ${submissions.length} submission(s) since last restart.
-        </p>
-        <table>
-          <thead>
-            <tr>
-              <th>Submitted At</th>
-              <th>Member Name</th>
-              <th>Member Email</th>
-              <th>Membership Type</th>
-              <th>Application Type</th>
-              <th>Payment Method</th>
-              <th>Amount (USD)</th>
-              <th>Under 18?</th>
-              <th>Guardian Email</th>
-              <th>Family Admin Email</th>
-              <th>Cert Agency</th>
-              <th>Cert Level</th>
-              <th>Phones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-          </tbody>
-        </table>
-      </div>
-    </body>
-    </html>
-  `);
-});
-
+  app.get('/admin', async (req, res) => {
+    let rows = [];
+    try {
+      const result = await pool.query(
+        `SELECT
+          created_at,
+          member_name,
+          member_email,
+          membership_type,
+          application_type,
+          payment_method,
+          payment_amount,
+          under18,
+          guardian_email,
+          family_admin_email,
+          cert_agency,
+          cert_level,
+          phones
+        FROM submissions
+        ORDER BY created_at DESC`
+      );
+      rows = result.rows;
+    } catch (err) {
+      console.error('Error loading submissions from DB:', err);
+    }
   
+    const tableRows = (rows.length
+      ? rows
+      : [{ created_at: null }]
+    )
+      .map(sub => {
+        if (!sub.created_at) {
+          return `<tr><td colspan="13" style="text-align:center;">No submissions yet.</td></tr>`;
+        }
+  
+        const date = new Date(sub.created_at).toLocaleString('en-US', {
+          timeZone: 'America/New_York'
+        });
+  
+        return `
+          <tr>
+            <td>${date}</td>
+            <td>${sub.member_name || ''}</td>
+            <td>${sub.member_email || ''}</td>
+            <td>${sub.membership_type || ''}</td>
+            <td>${sub.application_type || ''}</td>
+            <td>${sub.payment_method || ''}</td>
+            <td>${sub.payment_amount || ''}</td>
+            <td>${sub.under18 || ''}</td>
+            <td>${sub.guardian_email || ''}</td>
+            <td>${sub.family_admin_email || ''}</td>
+            <td>${sub.cert_agency || ''}</td>
+            <td>${sub.cert_level || ''}</td>
+            <td>${sub.phones || ''}</td>
+          </tr>
+        `;
+      })
+      .join('');
+  
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <title>SFDI Admin Dashboard</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+          }
+          h1 {
+            text-align: center;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #fff;
+            box-shadow: 0 0 6px rgba(0,0,0,0.1);
+          }
+          th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            font-size: 0.85rem;
+          }
+          th {
+            background: #0066cc;
+            color: #fff;
+            position: sticky;
+            top: 0;
+          }
+          tr:nth-child(even) {
+            background: #f9f9f9;
+          }
+          .wrapper {
+            max-width: 1200px;
+            margin: 0 auto;
+          }
+          .meta {
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+            color: #555;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="wrapper">
+          <h1>SFDI Membership Admin Dashboard</h1>
+          <p class="meta">
+            Logged in as <strong>${req.auth.user}</strong>.
+            Showing ${rows.length} submission(s) stored in PostgreSQL.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Submitted At</th>
+                <th>Member Name</th>
+                <th>Member Email</th>
+                <th>Membership Type</th>
+                <th>Application Type</th>
+                <th>Payment Method</th>
+                <th>Amount (USD)</th>
+                <th>Under 18?</th>
+                <th>Guardian Email</th>
+                <th>Family Admin Email</th>
+                <th>Cert Agency</th>
+                <th>Cert Level</th>
+                <th>Phones</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        </div>
+      </body>
+      </html>
+    `);
+  });
+  
+
+  initDb();
+
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
