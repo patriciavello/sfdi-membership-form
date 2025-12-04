@@ -104,11 +104,34 @@
       background: #ffe6e6;
       border: 1px solid #e38b8b;
     }
+    .explanation-box {
+      background: #eef7ff;
+      border: 1px solid #bcd7ff;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      line-height: 1.4;
+    }
+    .warning-text {
+      color: red;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
   <h1>SOUTH FLORIDA DIVERS, INC.</h1>
   <h2>Yearly Membership Agreement & Complete Liability Release</h2>
+  <div class="explanation-box">
+  <strong>Membership Eligibility & Dues</strong><br><br>
+  Regular membership is open to any certified diver holding internationally recognized certification cards,
+  any type of diving insurance, and is over 14 years of age. No owner or any person holding any managerial
+  capacity in a dive shop, equipment manufacturer, distributor, or charter dive operator shall be eligible
+  for regular membership. Such persons may become non-voting commercial members upon acceptance of the
+  Executive Board.<br><br>
+  Membership dues are currently <strong>$70.00 individual</strong> and <strong>$100.00 family</strong> per year, payable for the
+  calendar year. After the February meeting there is an additional <strong>$5.00 late fee</strong>.
+</div>
 
   <form id="membershipForm">
     <!-- Membership section -->
@@ -177,7 +200,7 @@
       <label>
         May we publish phone and email to club members?
         <div class="inline-radio">
-          <label><input type="radio" name="publishContact" value="Yes" required> Yes</label>
+          <label><input type="radio" name="publishContact" value="Yes" checked required> Yes</label>
           <label><input type="radio" name="publishContact" value="No"> No</label>
         </div>
       </label>
@@ -222,8 +245,8 @@
         <textarea name="medicalProblems" rows="3"></textarea>
       </label>
 
-      <p class="small-text">
-        PLEASE ATTACH A COPY OF YOUR MOST CURRENT DIVE CERTIFICATION CARD (you can email or upload separately as instructed by the club).
+      <p class="small-text warning-text">
+        PLEASE ATTACH A COPY OF YOUR MOST CURRENT DIVE CERTIFICATION CARD.
       </p>
 
 
@@ -250,8 +273,8 @@
         <input type="text" name="insuranceType" required>
       </label>
 
-      <p class="small-text">
-        PLEASE ATTACH PROOF OF DIVE INSURANCE (you can email or upload separately as instructed by the club).
+      <p class="small-text warning-text">
+        PLEASE ATTACH PROOF OF DIVE INSURANCE.
       </p>
       <!-- NEW: insurance proof file upload -->
       <label>
@@ -385,21 +408,32 @@ COMPLETE BAR TO LITIGATION.
       </label>
 
       <div id="guardianSection" style="display:none; margin-top:10px;">
+
+        <p id="under18Note" style="color: red; font-weight: bold; margin-bottom: 10px;">
+          Note: For member under 18 years of age, Parent or Guardian must sign below.
+        </p>
+      
+        <label>
+          Parent/Guardian Email (to receive signature request):
+          <input type="email" name="guardianEmail">
+        </label>
+      
         <label>
           Parent/Guardian Name (printed):
           <input type="text" name="guardianPrintName">
         </label>
-
+      
         <label>
           Parent/Guardian Signature (type full legal name):
           <input type="text" name="guardianSignature">
         </label>
       </div>
+      
     </fieldset>
 
     <button type="submit" id="submitBtn">Submit Membership Form</button>
     <p class="small-text">
-        After submitting, you’ll receive a copy of this agreement by email as a PDF ready to print.
+        After submitting, you’ll receive a copy of this agreement by email as a PDF ready to print. This PDF will also be send to SFDI.
     </p>
       
     <div id="formMessage" class="message" style="display:none;"></div>
@@ -410,15 +444,30 @@ COMPLETE BAR TO LITIGATION.
     const under18Radios = document.querySelectorAll('input[name="under18"]');
     const guardianSection = document.getElementById('guardianSection');
 
-    under18Radios.forEach(radio => {
-      radio.addEventListener('change', function () {
-        if (this.value === 'Yes') {
-          guardianSection.style.display = 'block';
-        } else {
-          guardianSection.style.display = 'none';
-        }
-      });
-    });
+    // Show/hide guardian fields + note and email when under 18
+const under18Radios = document.querySelectorAll('input[name="under18"]');
+const guardianSection = document.getElementById('guardianSection');
+const guardianEmailInput = document.querySelector('[name="guardianEmail"]');
+const guardianPrintNameInput = document.querySelector('[name="guardianPrintName"]');
+const guardianSignatureInput = document.querySelector('[name="guardianSignature"]');
+
+under18Radios.forEach(radio => {
+  radio.addEventListener('change', function () {
+    if (this.value === 'Yes') {
+      guardianSection.style.display = 'block';
+      if (guardianEmailInput) guardianEmailInput.required = true;
+    } else {
+      guardianSection.style.display = 'none';
+      if (guardianEmailInput) {
+        guardianEmailInput.required = false;
+        guardianEmailInput.value = '';
+      }
+      if (guardianPrintNameInput) guardianPrintNameInput.value = '';
+      if (guardianSignatureInput) guardianSignatureInput.value = '';
+    }
+  });
+});
+
 
     // Handle form submit via fetch to backend
     const membershipForm = document.getElementById('membershipForm');

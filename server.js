@@ -9,10 +9,8 @@ const multer = require('multer'); // <-- NEW
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-
 // Change this to the official SFDI address
-const SFDI_EMAIL = process.env.SFDI_EMAIL;
-
+const SFDI_EMAIL = process.env.SFDI_EMAIL
 
 // Multer: store uploads in memory
 const upload = multer({ storage: multer.memoryStorage() });
@@ -156,6 +154,7 @@ Member Signature: ${data.memberSignature || '___________________________'}
 Date: ${formatDate(data.signatureDate)}
 
 Under 18: ${data.under18 || 'No'}
+Parent/Guardian Email: ${data.guardianEmail || '___________________________'}
 Parent/Guardian Name (printed): ${data.guardianPrintName || '___________________________'}
 Parent/Guardian Signature: ${data.guardianSignature || '___________________________'}
 `;
@@ -214,17 +213,22 @@ app.post(
           .replace(/[^a-z0-9]/gi, '_');
   
         const emailText = `
-  SFDI Membership form submitted.
-  
-  Member: ${data.memberPrintName || data.name}
-  Email: ${data.email}
-  Phone(s): ${data.phones}
-  
-  A PDF copy of the signed membership agreement is attached.
-  Uploaded documents:
-  - Dive Certification Card: ${files.certFile ? files.certFile[0].originalname : 'none'}
-  - Proof of Dive Insurance: ${files.insuranceFile ? files.insuranceFile[0].originalname : 'none'}
-  `;
+          SFDI Membership form submitted.
+          
+          Member: ${data.memberPrintName || data.name}
+          Email: ${data.email}
+          Phone(s): ${data.phones}
+          Under 18: ${data.under18 || 'No'}
+          Parent/Guardian Email: ${data.guardianEmail || 'N/A'}
+          Parent/Guardian Name: ${data.guardianPrintName || 'N/A'}
+          Parent/Guardian Signature: ${data.guardianSignature || 'N/A'}
+          
+          A PDF copy of the signed membership agreement is attached.
+          Uploaded documents:
+          - Dive Certification Card: ${files.certFile ? files.certFile[0].originalname : 'none'}
+          - Proof of Dive Insurance: ${files.insuranceFile ? files.insuranceFile[0].originalname : 'none'}
+          `;
+          
   
         // Build attachments array
         const attachmentsForClub = [
@@ -249,32 +253,55 @@ app.post(
         }
   
         // Email to SFDI (with all attachments)
-        const mailToClub = {
-          from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
-          to: SFDI_EMAIL,
-          subject: `New Membership Form: ${data.memberPrintName || data.name || 'Unknown Member'}`,
-          text: emailText,
-          attachments: attachmentsForClub
-        };
+const mailToClub = {
+    from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+    to: SFDI_EMAIL,
+    subject: `New Membership Form: ${data.memberPrintName || data.name || 'Unknown Member'}`,
+    text: emailText,
+    attachments: attachmentsForClub
+  };
   
-        // Email to member (PDF only; you can also attach files if you want)
-        const mailToMember = {
-          from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
-          to: data.email,
-          subject: 'Your SFDI Membership Agreement (PDF)',
-          text: 'Thank you for your membership. Your completed agreement is attached as a PDF.',
-          attachments: [
-            {
-              filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-              content: pdfBuffer
-            }
-          ]
-        };
+  // Email to member (PDF only)
+  const mailToMember = {
+    from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+    to: data.email,
+    subject: 'Your SFDI Membership Agreement (PDF)',
+    text: 'Thank you for your membership. Your completed agreement is attached as a PDF.',
+    attachments: [
+      {
+        filename: `SFDI-Membership-${filenameSafeName}.pdf`,
+        content: pdfBuffer
+      }
+    ]
+  };
   
-        await transporter.sendMail(mailToClub);
-        await transporter.sendMail(mailToMember);
+  // OPTIONAL: Email to parent/guardian (PDF only) if provided
+  let mailToGuardian = null;
+  if (data.guardianEmail && data.guardianEmail.trim() !== '') {
+    mailToGuardian = {
+      from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+      to: data.guardianEmail.trim(),
+      subject: 'SFDI Membership Agreement for Your Child/Dependent (PDF)',
+      text: `You are listed as the parent/guardian for ${data.memberPrintName || data.name}.
+  A copy of the SFDI Yearly Membership Agreement & Complete Liability Release is attached as a PDF for your records.`,
+      attachments: [
+        {
+          filename: `SFDI-Membership-${filenameSafeName}.pdf`,
+          content: pdfBuffer
+        }
+      ]
+    };
+  }
   
-        res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });
+  // Send emails
+  await transporter.sendMail(mailToClub);
+  await transporter.sendMail(mailToMember);
+  if (mailToGuardian) {
+    await transporter.sendMail(mailToGuardian);
+  }
+  
+  res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });
+  
       } catch (err) {
         console.error('Error sending email:', err);
         res.status(500).json({ error: 'There was an error sending the email with the PDF and attachments.' });
