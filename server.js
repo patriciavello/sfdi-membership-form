@@ -558,93 +558,137 @@ app.post(
   })
       .join('');
   
-    res.send(`
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8" />
-        <title>SFDI Admin Dashboard</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: #f5f5f5;
-          }
-          h1 {
-            text-align: center;
-          }
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            background: #fff;
-            box-shadow: 0 0 6px rgba(0,0,0,0.1);
-          }
-          th, td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            font-size: 0.85rem;
-          }
-          th {
-            background: #0066cc;
-            color: #fff;
-            position: sticky;
-            top: 0;
-          }
-          tr:nth-child(even) {
-            background: #f9f9f9;
-          }
-          .wrapper {
-            max-width: 1200px;
-            margin: 0 auto;
-          }
-          .meta {
-            margin-bottom: 15px;
-            font-size: 0.9rem;
-            color: #555;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="wrapper">
-          <h1>SFDI Membership Admin Dashboard</h1>
-          <p class="meta">
-            Logged in as <strong>${req.auth.user}</strong>.
-            Showing ${rows.length} submission(s) stored in PostgreSQL.
-          </p>
-          <table>
-            <thead>
-              <tr>
-                <th>Submitted At</th>
-                <th>Member Name</th>
-                <th>Member Email</th>
-                <th>Membership Type</th>
-                <th>Application Type</th>
-                <th>Payment Method</th>
-                <th>Amount (USD)</th>
-                <th>Under 18?</th>
-                <th>Guardian Email</th>
-                <th>Family Admin Email</th>
-                <th>Cert Agency</th>
-                <th>Cert Level</th>
-                <th>Phones</th>
-                <!-- NEW -->
-                <th>Insurance OK?</th>
-                <th>Payment Received?</th>
-                <th>Cert OK?</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              ${tableRows}
-            </tbody>
-          </table>
-        </div>
-      </body>
-      </html>
-    `);
-  });
+      res.send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8" />
+          <title>SFDI Admin Dashboard</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              margin: 0;
+              padding: 20px;
+              background: #f5f5f5;
+            }
+            h1 {
+              text-align: center;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              background: #fff;
+              box-shadow: 0 0 6px rgba(0,0,0,0.1);
+            }
+            th, td {
+              border: 1px solid #ddd;
+              padding: 8px;
+              font-size: 0.85rem;
+            }
+            th {
+              background: #0066cc;
+              color: #fff;
+              position: sticky;
+              top: 0;
+            }
+            tr:nth-child(even) {
+              background: #f9f9f9;
+            }
+            .wrapper {
+              max-width: 1200px;
+              margin: 0 auto;
+            }
+            .meta {
+              margin-bottom: 15px;
+              font-size: 0.9rem;
+              color: #555;
+            }
+  
+            /* NEW: button styles for status */
+            .status-btn {
+              padding: 4px 8px;
+              border-radius: 4px;
+              border: none;
+              cursor: pointer;
+              font-size: 0.9rem;
+            }
+            .status-yes {
+              background-color: #d4edda;
+            }
+            .status-no {
+              background-color: #f8d7da;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="wrapper">
+            <h1>SFDI Membership Admin Dashboard</h1>
+            <p class="meta">
+              Logged in as <strong>${req.auth.user}</strong>.
+              Showing ${rows.length} submission(s) stored in PostgreSQL.
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Submitted At</th>
+                  <th>Member Name</th>
+                  <th>Member Email</th>
+                  <th>Membership Type</th>
+                  <th>Application Type</th>
+                  <th>Payment Method</th>
+                  <th>Amount (USD)</th>
+                  <th>Under 18?</th>
+                  <th>Guardian Email</th>
+                  <th>Family Admin Email</th>
+                  <th>Cert Agency</th>
+                  <th>Cert Level</th>
+                  <th>Phones</th>
+                  <!-- NEW -->
+                  <th>Insurance OK?</th>
+                  <th>Payment Received?</th>
+                  <th>Cert OK?</th>
+                </tr>
+              </thead>
+  
+              <tbody>
+                ${tableRows}
+              </tbody>
+            </table>
+          </div>
+  
+          <!-- NEW: script for toggling flags -->
+          <script>
+            async function toggleFlag(id, field) {
+              try {
+                const res = await fetch('/admin/update-flag', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({ id, field })
+                });
+  
+                const data = await res.json();
+  
+                if (!res.ok || !data.success) {
+                  console.error('Update failed:', data);
+                  alert('Error updating status. Please try again.');
+                  return;
+                }
+  
+                // Reload to show updated values
+                location.reload();
+              } catch (err) {
+                console.error('Network error:', err);
+                alert('Network error updating status.');
+              }
+            }
+          </script>
+        </body>
+        </html>
+      `);
+  
   
   
   initDb();
