@@ -117,6 +117,22 @@
       color: red;
       font-weight: bold;
     }
+    .status-btn {
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+
+    .status-yes {
+      background-color: #d4edda;
+    }
+
+    .status-no {
+      background-color: #f8d7da;
+    }
+
   </style>
 </head>
 <body>
@@ -571,6 +587,33 @@ COMPLETE BAR TO LITIGATION.
         }
       });
     });
+  </script>
+  <script>
+    async function toggleFlag(id, field) {
+      try {
+        const res = await fetch('/admin/update-flag', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ id, field })
+        });
+  
+        const data = await res.json();
+  
+        if (!res.ok || !data.success) {
+          console.error('Update failed:', data);
+          alert('Error updating status. Please try again.');
+          return;
+        }
+  
+        // Simplest: reload the page to reflect the change
+        location.reload();
+      } catch (err) {
+        console.error('Network error:', err);
+        alert('Network error updating status.');
+      }
+    }
   </script>
   
   
