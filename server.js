@@ -48,7 +48,7 @@ function formatDate(dateStr) {
   return `${mm}/${dd}/${yyyy}`;
 }
 
-// 1) Build the filled-in contract text (replacing the ____ fields)
+// Build the filled-in contract text (replacing the ____ fields)
 function buildContractText(data) {
   const memberName = data.memberPrintName || data.name || '___________________________';
   const certSince = formatDate(data.certDate);
@@ -157,6 +157,8 @@ Under 18: ${data.under18 || 'No'}
 Parent/Guardian Email: ${data.guardianEmail || '___________________________'}
 Parent/Guardian Name (printed): ${data.guardianPrintName || '___________________________'}
 Parent/Guardian Signature: ${data.guardianSignature || '___________________________'}
+
+Family Administrator Email (if applicable): ${data.familyAdminEmail || '___________________________'}
 `;
 }
 
@@ -222,6 +224,7 @@ app.post(
           Parent/Guardian Email: ${data.guardianEmail || 'N/A'}
           Parent/Guardian Name: ${data.guardianPrintName || 'N/A'}
           Parent/Guardian Signature: ${data.guardianSignature || 'N/A'}
+          Family Administrator Email: ${data.familyAdminEmail || 'N/A'}
           
           A PDF copy of the signed membership agreement is attached.
           Uploaded documents:
@@ -275,7 +278,7 @@ const mailToClub = {
     ]
   };
   
-  // OPTIONAL: Email to parent/guardian (PDF only) if provided
+  // Email to parent/guardian (PDF only) if provided
   let mailToGuardian = null;
   if (data.guardianEmail && data.guardianEmail.trim() !== '') {
     mailToGuardian = {
@@ -292,12 +295,33 @@ const mailToClub = {
       ]
     };
   }
+// OPTIONAL: Email to family administrator (PDF only) if provided
+  let mailToFamilyAdmin = null;
+  if (data.familyAdminEmail && data.familyAdminEmail.trim() !== '') {
+    mailToFamilyAdmin = {
+      from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+      to: data.familyAdminEmail.trim(),
+      subject: 'SFDI Membership Agreement (Family Membership Administrator Copy)',
+      text: `You are listed as the family administrator for the SFDI membership of ${data.memberPrintName || data.name}.
+  A copy of the SFDI Yearly Membership Agreement & Complete Liability Release is attached as a PDF for your records.`,
+      attachments: [
+        {
+          filename: `SFDI-Membership-${filenameSafeName}.pdf`,
+          content: pdfBuffer
+        }
+      ]
+    };
+  }
+  
   
   // Send emails
   await transporter.sendMail(mailToClub);
   await transporter.sendMail(mailToMember);
   if (mailToGuardian) {
     await transporter.sendMail(mailToGuardian);
+  }
+  if (mailToFamilyAdmin) {
+    await transporter.sendMail(mailToFamilyAdmin);
   }
   
   res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });

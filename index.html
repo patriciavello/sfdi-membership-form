@@ -166,6 +166,19 @@
           <input type="number" step="0.01" name="paymentAmount" placeholder="70.00 / 100.00" required>
         </label>
       </div>
+      <div id="familyAdminSection" style="display:none; margin-top: 10px;">
+        <label>
+          Family Administrator Name (responsible for membership payment):
+          <input type="text" name="familyAdminName">
+        </label>
+      </div>      
+
+      <div id="familyAdminSection" style="display:none; margin-top: 10px;">
+        <label>
+          Family Administrator Name (responsible for membership payment):
+          <input type="text" name="familyAdminName">
+        </label>
+      </div>
     </fieldset>
 
     <!-- Diver’s Information -->
@@ -446,11 +459,18 @@ COMPLETE BAR TO LITIGATION.
       const submitBtn = document.getElementById('submitBtn');
       const formMessage = document.getElementById('formMessage');
   
+      // Under 18 / guardian fields
       const under18Radios = document.querySelectorAll('input[name="under18"]');
       const guardianSection = document.getElementById('guardianSection');
       const guardianEmailInput = document.querySelector('[name="guardianEmail"]');
       const guardianPrintNameInput = document.querySelector('[name="guardianPrintName"]');
       const guardianSignatureInput = document.querySelector('[name="guardianSignature"]');
+  
+      // Membership type / payment / family admin email
+      const membershipTypeRadios = document.querySelectorAll('input[name="membershipType"]');
+      const paymentAmountInput = document.querySelector('input[name="paymentAmount"]');
+      const familyAdminSection = document.getElementById('familyAdminSection');
+      const familyAdminEmailInput = document.querySelector('[name="familyAdminEmail"]');
   
       // --- Helper: show/hide guardian section ---
       function updateGuardianSection(value) {
@@ -468,6 +488,23 @@ COMPLETE BAR TO LITIGATION.
         }
       }
   
+      // --- Helper: show/hide family admin email section ---
+      function updateFamilyAdminVisibility() {
+        const selectedType = Array.from(membershipTypeRadios).find(r => r.checked)?.value;
+        const amount = parseFloat(paymentAmountInput.value || '0');
+  
+        if (selectedType === 'FAMILY' && amount === 0) {
+          familyAdminSection.style.display = 'block';
+          if (familyAdminEmailInput) familyAdminEmailInput.required = true;
+        } else {
+          familyAdminSection.style.display = 'none';
+          if (familyAdminEmailInput) {
+            familyAdminEmailInput.required = false;
+            familyAdminEmailInput.value = '';
+          }
+        }
+      }
+  
       // --- Wire up under-18 radios ---
       under18Radios.forEach(radio => {
         radio.addEventListener('change', function () {
@@ -475,13 +512,25 @@ COMPLETE BAR TO LITIGATION.
         });
       });
   
-      // Initialize state based on default radio selection
-      const initiallyChecked = Array.from(under18Radios).find(r => r.checked);
-      if (initiallyChecked) {
-        updateGuardianSection(initiallyChecked.value);
+      // Initialize guardian state based on default radio selection
+      const initiallyCheckedUnder18 = Array.from(under18Radios).find(r => r.checked);
+      if (initiallyCheckedUnder18) {
+        updateGuardianSection(initiallyCheckedUnder18.value);
       } else {
         updateGuardianSection('No');
       }
+  
+      // --- Wire up membership type + payment amount ---
+      membershipTypeRadios.forEach(radio => {
+        radio.addEventListener('change', updateFamilyAdminVisibility);
+      });
+  
+      if (paymentAmountInput) {
+        paymentAmountInput.addEventListener('input', updateFamilyAdminVisibility);
+      }
+  
+      // Initialize family admin visibility on load
+      updateFamilyAdminVisibility();
   
       // --- Handle form submit via fetch to backend (with files) ---
       membershipForm.addEventListener('submit', async function (e) {
@@ -504,9 +553,10 @@ COMPLETE BAR TO LITIGATION.
             formMessage.className = 'message success';
             formMessage.textContent = result.message || 'Form submitted successfully. Please check your email.';
   
-            // Reset form and guardian section state
+            // Reset form and sections
             membershipForm.reset();
             updateGuardianSection('No');
+            updateFamilyAdminVisibility();
           } else {
             formMessage.className = 'message error';
             formMessage.textContent = result.error || 'There was a problem submitting the form.';
@@ -522,6 +572,7 @@ COMPLETE BAR TO LITIGATION.
       });
     });
   </script>
+  
   
 </body>
 </html>
