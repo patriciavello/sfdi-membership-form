@@ -429,8 +429,40 @@ app.post(
       }
     }
   );
+  // Admin allow toggling verification field for insurance and certification
+  app.post('/admin/update-flag', async (req, res) => {
+    const { id, field } = req.body;
   
-  // Simple Admin Dashboard (protected by basic auth)
+    // Only allow toggling these two fields from the admin page:
+    const allowedFields = ['insurance_verified', 'certification_verified'];
+    if (!allowedFields.includes(field)) {
+      return res.status(400).json({ success: false, error: 'Invalid field' });
+    }
+  
+    try {
+      const result = await pool.query(
+        `UPDATE submissions
+         SET ${field} = NOT ${field}
+         WHERE id = $1
+         RETURNING ${field}`,
+        [id]
+      );
+  
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Submission not found' });
+      }
+  
+      return res.json({
+        success: true,
+        value: result.rows[0][field]
+      });
+    } catch (err) {
+      console.error('Error updating flag:', err);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+  });
+  
+  // Admin Dashboard (protected by basic auth)
   app.get('/admin', async (req, res) => {
     let rows = [];
     try {
@@ -491,10 +523,17 @@ app.post(
             <td>${sub.cert_level || ''}</td>
             <td>${sub.phones || ''}</td>
 
-            <!-- NEW: Insurance verification (will make clickable later) -->
-            <td>${sub.insurance_verified ? '✅ Yes' : '❌ No'}</td>
+            <!-- Insurance: clickable toggle -->
+            <td>
+              <button
+                class="status-btn ${sub.insurance_verified ? 'status-yes' : 'status-no'}"
+                onclick="toggleFlag(${sub.id}, 'insurance_verified')"
+              >
+                ${sub.insurance_verified ? '✅ Yes' : '❌ No'}
+              </button>
+            </td>
 
-            <!-- NEW: Payment verification (read-only on standard admin page) -->
+            <!-- Payment: still READ-ONLY on admin -->
             <td>
               ${
                 Number(sub.payment_amount) > 0
@@ -503,12 +542,20 @@ app.post(
               }
             </td>
 
-            <!-- NEW: Certification verification (will make clickable later) -->
-            <td>${sub.certification_verified ? '✅ Yes' : '❌ No'}</td>
+            <!-- Certification: clickable toggle -->
+            <td>
+              <button
+                class="status-btn ${sub.certification_verified ? 'status-yes' : 'status-no'}"
+                onclick="toggleFlag(${sub.id}, 'certification_verified')"
+              >
+                ${sub.certification_verified ? '✅ Yes' : '❌ No'}
+              </button>
+            </td>
           </tr>
         `;
 
-      })
+
+  })
       .join('');
   
     res.send(`
