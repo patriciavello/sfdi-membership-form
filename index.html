@@ -440,74 +440,88 @@ COMPLETE BAR TO LITIGATION.
   </form>
 
   <script>
-    // Show/hide guardian fields
-    const under18Radios = document.querySelectorAll('input[name="under18"]');
-    const guardianSection = document.getElementById('guardianSection');
-
-    // Show/hide guardian fields + note and email when under 18
-const under18Radios = document.querySelectorAll('input[name="under18"]');
-const guardianSection = document.getElementById('guardianSection');
-const guardianEmailInput = document.querySelector('[name="guardianEmail"]');
-const guardianPrintNameInput = document.querySelector('[name="guardianPrintName"]');
-const guardianSignatureInput = document.querySelector('[name="guardianSignature"]');
-
-under18Radios.forEach(radio => {
-  radio.addEventListener('change', function () {
-    if (this.value === 'Yes') {
-      guardianSection.style.display = 'block';
-      if (guardianEmailInput) guardianEmailInput.required = true;
-    } else {
-      guardianSection.style.display = 'none';
-      if (guardianEmailInput) {
-        guardianEmailInput.required = false;
-        guardianEmailInput.value = '';
-      }
-      if (guardianPrintNameInput) guardianPrintNameInput.value = '';
-      if (guardianSignatureInput) guardianSignatureInput.value = '';
-    }
-  });
-});
-
-
-    // Handle form submit via fetch to backend
-    const membershipForm = document.getElementById('membershipForm');
-    const submitBtn = document.getElementById('submitBtn');
-    const formMessage = document.getElementById('formMessage');
-
-    membershipForm.addEventListener('submit', async function (e) {
-      e.preventDefault();
-      submitBtn.disabled = true;
-      formMessage.style.display = 'none';
-
-      // Use FormData directly (includes files)
-      const formData = new FormData(membershipForm);
-
-      try {
-        const response = await fetch('/submit-membership', {
-          method: 'POST',
-          body: formData // no Content-Type header, browser sets it
-        });
-
-        const result = await response.json();
-
-        formMessage.style.display = 'block';
-        if (response.ok) {
-          formMessage.className = 'message success';
-          formMessage.textContent = result.message || 'Form submitted successfully. Please check your email.';
-          membershipForm.reset();
-          guardianSection.style.display = 'none';
+    document.addEventListener('DOMContentLoaded', () => {
+      // --- Elements ---
+      const membershipForm = document.getElementById('membershipForm');
+      const submitBtn = document.getElementById('submitBtn');
+      const formMessage = document.getElementById('formMessage');
+  
+      const under18Radios = document.querySelectorAll('input[name="under18"]');
+      const guardianSection = document.getElementById('guardianSection');
+      const guardianEmailInput = document.querySelector('[name="guardianEmail"]');
+      const guardianPrintNameInput = document.querySelector('[name="guardianPrintName"]');
+      const guardianSignatureInput = document.querySelector('[name="guardianSignature"]');
+  
+      // --- Helper: show/hide guardian section ---
+      function updateGuardianSection(value) {
+        if (value === 'Yes') {
+          guardianSection.style.display = 'block';
+          if (guardianEmailInput) guardianEmailInput.required = true;
         } else {
-          formMessage.className = 'message error';
-          formMessage.textContent = result.error || 'There was a problem submitting the form.';
+          guardianSection.style.display = 'none';
+          if (guardianEmailInput) {
+            guardianEmailInput.required = false;
+            guardianEmailInput.value = '';
+          }
+          if (guardianPrintNameInput) guardianPrintNameInput.value = '';
+          if (guardianSignatureInput) guardianSignatureInput.value = '';
         }
-      } catch (err) {
-        formMessage.style.display = 'block';
-        formMessage.className = 'message error';
-        formMessage.textContent = 'Network error while submitting the form.';
-      } finally {
-        submitBtn.disabled = false;
       }
+  
+      // --- Wire up under-18 radios ---
+      under18Radios.forEach(radio => {
+        radio.addEventListener('change', function () {
+          updateGuardianSection(this.value);
+        });
+      });
+  
+      // Initialize state based on default radio selection
+      const initiallyChecked = Array.from(under18Radios).find(r => r.checked);
+      if (initiallyChecked) {
+        updateGuardianSection(initiallyChecked.value);
+      } else {
+        updateGuardianSection('No');
+      }
+  
+      // --- Handle form submit via fetch to backend (with files) ---
+      membershipForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        submitBtn.disabled = true;
+        formMessage.style.display = 'none';
+  
+        const formData = new FormData(membershipForm);
+  
+        try {
+          const response = await fetch('/submit-membership', {
+            method: 'POST',
+            body: formData // FormData includes file uploads
+          });
+  
+          const result = await response.json();
+  
+          formMessage.style.display = 'block';
+          if (response.ok) {
+            formMessage.className = 'message success';
+            formMessage.textContent = result.message || 'Form submitted successfully. Please check your email.';
+  
+            // Reset form and guardian section state
+            membershipForm.reset();
+            updateGuardianSection('No');
+          } else {
+            formMessage.className = 'message error';
+            formMessage.textContent = result.error || 'There was a problem submitting the form.';
+          }
+        } catch (err) {
+          console.error('Submit error:', err);
+          formMessage.style.display = 'block';
+          formMessage.className = 'message error';
+          formMessage.textContent = 'Network error while submitting the form.';
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
     });
   </script>
+  
 </body>
 </html>
