@@ -10,6 +10,8 @@ const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const session = require('express-session');
 
+//Add OCR helpers
+const { createWorker } = require('tesseract.js');
 
 
 // In-memory store of submissions (resets on server restart)
@@ -85,6 +87,8 @@ async function initDb() {
         insurance_file BYTEA,
         insurance_file_name TEXT,
         insurance_file_mime TEXT,
+        dan_id TEXT,
+        dan_expiration_date DATE,
 
         insurance_verified BOOLEAN DEFAULT FALSE,
         certification_verified BOOLEAN DEFAULT FALSE,
@@ -180,6 +184,107 @@ function formatDate(dateStr) {
   const yyyy = d.getFullYear();
   return `${mm}/${dd}/${yyyy}`;
 }
+
+//Helper: Extract info from Insurance using OCR
+// ---- OCR SETUP ----
+let ocrWorkerPromise = null;
+
+function getOcrWorker() {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = createWorker('eng');
+  }
+  return ocrWorkerPromise;
+}
+
+async function runOcrOnBuffer(buffer) {
+  const worker = await getOcrWorker();
+  const { data: { text } } = await worker.recognize(buffer);
+  return text;
+}
+
+// Normalize names to compare (upper-case, remove extra spaces/punctuation)
+function normalizeName(name) {
+  if (!name) return '';
+  return name
+    .toUpperCase()
+    .replace(/[^A-Z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Try to parse DAN info from OCR text
+function parseDanInfoFromText(text) {
+  if (!text) return null;
+
+  // Check if it looks like a DAN card at all
+  if (!/DAN|DIVERS ALERT NETWORK/i.test(text)) {
+    return null;
+  }
+
+  // Very generic guesses – you can tweak based on real cards
+  const idMatch = text.match(/(?:DAN\s*ID|Member\s*(?:ID|No\.?|Number)|ID\s*#)\s*[:#]?\s*([A-Z0-9\-]+)/i);
+  const expMatch = text.match(/(?:Valid\s*Until|Valid\s*Thru|Expires(?:\s*On)?|Exp\.?\s*Date)\s*[:\s]*([0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})/i);
+  const nameMatch = text.match(/(?:Name|Member)\s*[:\-]\s*([A-Z ,.'-]{3,})/i);
+
+  const danId = idMatch ? idMatch[1].trim() : null;
+  const expirationRaw = expMatch ? expMatch[1].trim() : null;
+  const cardName = nameMatch ? nameMatch[1].trim() : null;
+
+  return {
+    danId,
+    expirationRaw,
+    cardName
+  };
+}
+
+// Convert "MM/DD/YYYY" or "MM-DD-YYYY" to Date object (for Postgres DATE)
+function parseExpirationDate(expirationRaw) {
+  if (!expirationRaw) return null;
+  const match = expirationRaw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (!match) return null;
+  let [, mm, dd, yyyy] = match;
+  if (yyyy.length === 2) {
+    // assume 20xx
+    yyyy = '20' + yyyy;
+  }
+  const iso = `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  return iso; // let pg parse ISO date
+}
+
+// High-level helper: given buffer + memberName → maybe DAN info to store
+async function extractDanInfoFromInsurance(buffer, memberName) {
+  try {
+    const text = await runOcrOnBuffer(buffer);
+    const parsed = parseDanInfoFromText(text);
+    if (!parsed) {
+      console.log('OCR: Not recognized as DAN card.');
+      return null;
+    }
+
+    const normalizedCardName = normalizeName(parsed.cardName);
+    const normalizedMemberName = normalizeName(memberName);
+
+    if (normalizedCardName && normalizedMemberName && normalizedCardName === normalizedMemberName) {
+      const expDate = parseExpirationDate(parsed.expirationRaw);
+      return {
+        danId: parsed.danId || null,
+        danExpirationDate: expDate // ISO string or null
+      };
+    } else {
+      console.log('OCR: Name mismatch, not storing DAN info:', {
+        cardName: parsed.cardName,
+        memberName
+      });
+      return null;
+    }
+  } catch (err) {
+    console.error('Error during OCR / DAN parsing:', err);
+    return null;
+  }
+}
+
 
 // Build the filled-in contract text (replacing the ____ fields)
 function buildContractText(data) {
@@ -368,6 +473,14 @@ app.post('/submit-membership',
       const certFile = files.certFile && files.certFile[0] ? files.certFile[0] : null;
       const insuranceFile = files.insuranceFile && files.insuranceFile[0] ? files.insuranceFile[0] : null;
 
+      let danInfo = null;
+      if (insuranceFile && insuranceFile.mimetype && insuranceFile.mimetype.startsWith('image/')) {
+        danInfo = await extractDanInfoFromInsurance(
+          insuranceFile.buffer,
+          data.memberPrintName || data.name || ''
+        );
+      }
+  
   
       if (!data.email) {
         return res.status(400).json({ error: 'Member email is required.' });
@@ -511,10 +624,12 @@ app.post('/submit-membership',
           cert_file_mime,
           insurance_file,
           insurance_file_name,
-          insurance_file_mime
+          insurance_file_mime,
+          dan_id,
+          dan_expiration_date
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-          $17, $18, $19)
+          $17, $18, $19, $20, $21)
       `,
       [
         data.memberPrintName || data.name || '',
@@ -535,7 +650,10 @@ app.post('/submit-membership',
         certFile ? certFile.mimetype : null,
         insuranceFile ? insuranceFile.buffer : null,
         insuranceFile ? insuranceFile.originalname : null,
-        insuranceFile ? insuranceFile.mimetype : null
+        insuranceFile ? insuranceFile.mimetype : null,
+        // DAN OCR
+        danInfo ? danInfo.danId : null,
+        danInfo ? danInfo.danExpirationDate : null
       ]
     );
   } catch (dbErr) {
@@ -958,6 +1076,18 @@ app.post('/member/documents',
         values.push(insuranceFile.originalname);
         sets.push(`insurance_file_mime = $${idx++}`);
         values.push(insuranceFile.mimetype);
+      }
+
+      // If OCR succeeded and name matched, update DAN fields too
+      if (danInfo) {
+        sets.push(`dan_id = $${idx++}`);
+        values.push(danInfo.danId || null);
+        sets.push(`dan_expiration_date = $${idx++}`);
+        values.push(danInfo.danExpirationDate || null);
+      }
+
+      if (!sets.length) {
+        return res.redirect('/member/profile');
       }
 
       // Append WHERE id = $idx
@@ -1437,6 +1567,7 @@ app.get('/admin', async (req, res) => {
           cert_level,
           phones,
           insurance_verified,
+          dan_expiration_date,
           payment_received,
           certification_verified,
           insurance_file_mime
@@ -1477,6 +1608,7 @@ app.get('/admin', async (req, res) => {
             <td>${sub.cert_agency || ''}</td>
             <td>${sub.cert_level || ''}</td>
             <td>${sub.phones || ''}</td>
+            <td>${sub.danExpirationDate || 'N/A'}</td>
             <!-- NEW: Insurance card thumbnail -->
             <td>
               ${
@@ -1608,6 +1740,7 @@ app.get('/admin', async (req, res) => {
                   <th>Cert Agency</th>
                   <th>Cert Level</th>
                   <th>Phones</th>
+                  <th> Inrurance exp</th>
                   <th>Insurance Card</th>
                   <!-- NEW -->
                   <th>Insurance OK?</th>
