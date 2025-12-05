@@ -79,7 +79,13 @@ async function initDb() {
         cert_level TEXT,
         cert_number TEXT,
         phones TEXT,
-        -- NEW ADMIN FIELDS
+        cert_file BYTEA,
+        cert_file_name TEXT,
+        cert_file_mime TEXT,
+        insurance_file BYTEA,
+        insurance_file_name TEXT,
+        insurance_file_mime TEXT,
+
         insurance_verified BOOLEAN DEFAULT FALSE,
         certification_verified BOOLEAN DEFAULT FALSE,
         payment_received BOOLEAN DEFAULT FALSE
@@ -359,6 +365,9 @@ app.post('/submit-membership',
     async (req, res) => {
       const data = req.body; // text fields
       const files = req.files || {};
+      const certFile = files.certFile && files.certFile[0] ? files.certFile[0] : null;
+      const insuranceFile = files.insuranceFile && files.insuranceFile[0] ? files.insuranceFile[0] : null;
+
   
       if (!data.email) {
         return res.status(400).json({ error: 'Member email is required.' });
@@ -496,9 +505,16 @@ app.post('/submit-membership',
           cert_agency,
           cert_level,
           cert_number,
-          phones
+          phones,
+          cert_file,
+          cert_file_name,
+          cert_file_mime,
+          insurance_file,
+          insurance_file_name,
+          insurance_file_mime
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+          $17, $18, $19)
       `,
       [
         data.memberPrintName || data.name || '',
@@ -513,7 +529,13 @@ app.post('/submit-membership',
         data.certAgency || '',
         data.certLevel || '',
         data.certCardNumber || '',
-        data.phones || ''
+        data.phones || '',
+        certFile ? certFile.buffer : null,
+        certFile ? certFile.originalname : null,
+        certFile ? certFile.mimetype : null,
+        insuranceFile ? insuranceFile.buffer : null,
+        insuranceFile ? insuranceFile.originalname : null,
+        insuranceFile ? insuranceFile.mimetype : null
       ]
     );
   } catch (dbErr) {
@@ -789,6 +811,25 @@ app.get('/member/profile', async (req, res) => {
 
                   <button type="submit">Save Changes</button>
                 </form>
+                <hr style="margin:20px 0;" />
+
+                <h2>Update Documents</h2>
+                <p style="font-size:0.85rem; color:#555;">
+                  You can upload a new version of your dive certification card or insurance proof.
+                </p>
+
+                <form method="POST" action="/member/documents" enctype="multipart/form-data">
+                  <label>New Dive Certification Card (optional)
+                    <input type="file" name="certFile" accept="image/*,application/pdf" />
+                  </label>
+
+                  <label>New Proof of Dive Insurance (optional)
+                    <input type="file" name="insuranceFile" accept="image/*,application/pdf" />
+                  </label>
+
+                  <button type="submit">Upload Documents</button>
+                </form>
+
               </div>
             </body>
             </html>
@@ -861,6 +902,83 @@ app.post('/member/profile', bodyParser.urlencoded({ extended: true }), async (re
     res.status(500).send('Error saving profile.');
   }
 });
+
+//Member Documents 
+app.post('/member/documents',
+  upload.fields([
+    { name: 'certFile', maxCount: 1 },
+    { name: 'insuranceFile', maxCount: 1 }
+  ]),
+  async (req, res) => {
+    if (!req.session.memberAccountId) {
+      return res.redirect('/member/login');
+    }
+
+    try {
+      // 1) Load member account to know which submission row to update
+      const accountResult = await pool.query(
+        'SELECT * FROM member_accounts WHERE id = $1',
+        [req.session.memberAccountId]
+      );
+
+      if (accountResult.rows.length === 0) {
+        req.session.memberAccountId = null;
+        return res.redirect('/member/login');
+      }
+
+      const account = accountResult.rows[0];
+
+      const files = req.files || {};
+      const certFile = files.certFile && files.certFile[0] ? files.certFile[0] : null;
+      const insuranceFile = files.insuranceFile && files.insuranceFile[0] ? files.insuranceFile[0] : null;
+
+      // If no files provided, just redirect back
+      if (!certFile && !insuranceFile) {
+        return res.redirect('/member/profile');
+      }
+
+      // 2) Build dynamic UPDATE based on which file(s) are present
+      const sets = [];
+      const values = [];
+      let idx = 1;
+
+      if (certFile) {
+        sets.push(`cert_file = $${idx++}`);
+        values.push(certFile.buffer);
+        sets.push(`cert_file_name = $${idx++}`);
+        values.push(certFile.originalname);
+        sets.push(`cert_file_mime = $${idx++}`);
+        values.push(certFile.mimetype);
+      }
+
+      if (insuranceFile) {
+        sets.push(`insurance_file = $${idx++}`);
+        values.push(insuranceFile.buffer);
+        sets.push(`insurance_file_name = $${idx++}`);
+        values.push(insuranceFile.originalname);
+        sets.push(`insurance_file_mime = $${idx++}`);
+        values.push(insuranceFile.mimetype);
+      }
+
+      // Append WHERE id = $idx
+      values.push(account.submission_id);
+
+      const sql = `
+        UPDATE submissions
+        SET ${sets.join(', ')}
+        WHERE id = $${idx}
+      `;
+
+      await pool.query(sql, values);
+
+      res.redirect('/member/profile');
+    } catch (err) {
+      console.error('Error updating member documents:', err);
+      res.status(500).send('Error updating documents.');
+    }
+  }
+);
+
 
 //Member logout
 app.get('/member/logout', (req, res) => {
@@ -1129,15 +1247,14 @@ app.get('/member/login', (req, res) => {
           color: #fff;
           cursor: pointer;
         }
-        .section-title {
-          font-weight: bold;
-          margin-top: 10px;
-          margin-bottom: 5px;
+        .link {
+          color: #0066cc;
+          cursor: pointer;
+          font-size: 0.85rem;
+          text-decoration: underline;
         }
-        .note {
-          font-size: 0.8rem;
-          color: #555;
-          margin-bottom: 10px;
+        .hidden {
+          display: none;
         }
         hr {
           margin: 20px 0;
@@ -1148,31 +1265,7 @@ app.get('/member/login', (req, res) => {
       <div class="wrapper">
         <h1>Member Portal</h1>
 
-        <div class="section-title">1) Request Verification Code</div>
-        <p class="note">Use the email you used on the membership form (member, guardian, or family admin email). We'll email you a 6-digit code.</p>
-        <form method="POST" action="/member/request-code">
-          <label>Email</label>
-          <input type="email" name="email" required />
-          <button type="submit">Send Code</button>
-        </form>
-
-        <hr />
-
-        <div class="section-title">2) Set / Reset Password (with code)</div>
-        <p class="note">After you receive the code by email, enter it here along with a new password.</p>
-        <form method="POST" action="/member/set-password">
-          <label>Email</label>
-          <input type="email" name="email" required />
-          <label>Verification Code</label>
-          <input type="text" name="code" required minlength="6" maxlength="6" />
-          <label>New Password</label>
-          <input type="password" name="password" required minlength="6" />
-          <button type="submit">Save Password</button>
-        </form>
-
-        <hr />
-
-        <div class="section-title">3) Login</div>
+        <!-- Login Form -->
         <form method="POST" action="/member/login">
           <label>Email</label>
           <input type="email" name="email" required />
@@ -1180,11 +1273,58 @@ app.get('/member/login', (req, res) => {
           <input type="password" name="password" required />
           <button type="submit">Login</button>
         </form>
+
+        <div style="text-align:center;">
+          <span class="link" onclick="toggleReset()">Forgot your password?</span>
+        </div>
+
+        <!-- Hidden Reset Area -->
+        <div id="resetArea" class="hidden">
+          <hr />
+
+          <h3>Reset Your Password</h3>
+
+          <p style="font-size:0.85rem; color:#555;">
+            1) First request a verification code:
+          </p>
+
+          <form method="POST" action="/member/request-code">
+            <label>Email</label>
+            <input type="email" name="email" required />
+            <button type="submit">Send Verification Code</button>
+          </form>
+
+          <p style="font-size:0.85rem; color:#555;">
+            2) After receiving the code by email, set your new password:
+          </p>
+
+          <form method="POST" action="/member/set-password">
+            <label>Email</label>
+            <input type="email" name="email" required />
+
+            <label>Verification Code</label>
+            <input type="text" name="code" required minlength="6" maxlength="6" />
+
+            <label>New Password</label>
+            <input type="password" name="password" required minlength="6" />
+
+            <button type="submit">Save New Password</button>
+          </form>
+        </div>
+
       </div>
+
+      <script>
+        function toggleReset() {
+          const section = document.getElementById('resetArea');
+          section.classList.toggle('hidden');
+        }
+      </script>
     </body>
     </html>
   `);
 });
+
 
 //Member: Request verification code
 app.post('/member/request-code', bodyParser.urlencoded({ extended: true }), async (req, res) => {
