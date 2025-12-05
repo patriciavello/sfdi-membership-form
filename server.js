@@ -7,6 +7,9 @@ const PDFDocument = require('pdfkit'); // <-- NEW
 const multer = require('multer'); // <-- NEW
 const basicAuth = require('express-basic-auth'); // <-- NEW
 const { Pool } = require('pg');
+const bcrypt = require('bcrypt');
+const session = require('express-session');
+
 
 
 // In-memory store of submissions (resets on server restart)
@@ -16,6 +19,16 @@ const submissions = []; // <-- NEW
 const app = express();
 const PORT = process.env.PORT || 3000;
 const SFDI_EMAIL = process.env.SFDI_EMAIL
+
+//Secret passwords saved in memory
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'change-this-secret',
+    resave: false,
+    saveUninitialized: false
+  })
+);
+
 
 // PostgreSQL connection pool
 const pool = new Pool({
@@ -46,6 +59,7 @@ transporter.verify((error, success) => {
     console.log('SMTP server is ready to take our messages');
   }
 });
+
 async function initDb() {
   try {
     await pool.query(`
@@ -70,7 +84,18 @@ async function initDb() {
         payment_received BOOLEAN DEFAULT FALSE,
       )
     `);
-    console.log('PostgreSQL: submissions table is ready');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS member_accounts (
+        id SERIAL PRIMARY KEY,
+        submission_id INT REFERENCES submissions(id) ON DELETE CASCADE,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    console.log('PostgreSQL: submissions & member_accounts tables are ready');
   } catch (err) {
     console.error('Error initializing database:', err);
   }
@@ -107,6 +132,24 @@ app.use(
 
 app.use(express.static(__dirname)); // serves index.html, etc.
 
+// Helper: Pick most recent submission that matches that email
+async function findSubmissionByEmail(email) {
+  const result = await pool.query(
+    `
+    SELECT *
+    FROM submissions
+    WHERE member_email = $1
+       OR guardian_email = $1
+       OR family_admin_email = $1
+    ORDER BY created_at DESC
+    LIMIT 1
+    `,
+    [email]
+  );
+  return result.rows[0] || null;
+}
+
+
 // Helper: format date yyyy-mm-dd -> mm/dd/yyyy
 function formatDate(dateStr) {
   if (!dateStr) return '_____________________';
@@ -127,109 +170,109 @@ function buildContractText(data) {
   const certLevel = data.certLevel || '___________________________';
 
   return `
-SOUTH FLORIDA DIVERS, INC.
-Yearly Membership Agreement & Complete Liability Release
+  SOUTH FLORIDA DIVERS, INC.
+  Yearly Membership Agreement & Complete Liability Release
 
-Section 1
-Paragraph 1.01
-This is a membership agreement between ${memberName} (member) and the South
-Florida Divers, Inc. - Club. It is my intention by signing this document to be contractually
-bound by its provisions, particularly those related to release of liability.
+  Section 1
+  Paragraph 1.01
+  This is a membership agreement between ${memberName} (member) and the South
+  Florida Divers, Inc. - Club. It is my intention by signing this document to be contractually
+  bound by its provisions, particularly those related to release of liability.
 
-Paragraph 1.02
-The following terms will apply to this document. The term member will apply to the applicant as
-stated Section 1. Paragraph 1.01. The term club will apply to South Florida Divers, Inc. The term
-members will apply to all other potential members of South Florida Divers, Inc. The term coordinator
-will refer to any of the club members who conduct or organize an event. The term sponsor refers to
-the act or process of organizing, promoting and conducting activities that have been approved by the
-club. The term E-Board refers to the members that have been elected to the executive board of
-director of the club.
+  Paragraph 1.02
+  The following terms will apply to this document. The term member will apply to the applicant as
+  stated Section 1. Paragraph 1.01. The term club will apply to South Florida Divers, Inc. The term
+  members will apply to all other potential members of South Florida Divers, Inc. The term coordinator
+  will refer to any of the club members who conduct or organize an event. The term sponsor refers to
+  the act or process of organizing, promoting and conducting activities that have been approved by the
+  club. The term E-Board refers to the members that have been elected to the executive board of
+  director of the club.
 
-Section 2
-Paragraph 2.01
-I, the member, state that I have been a certified scuba diver since ${certSince}.
-My certification was granted by the ${certAgency} certifying agency which
-assigned certification number ${certNumber}. My highest level of training
-certification is ${certLevel}.
+  Section 2
+  Paragraph 2.01
+  I, the member, state that I have been a certified scuba diver since ${certSince}.
+  My certification was granted by the ${certAgency} certifying agency which
+  assigned certification number ${certNumber}. My highest level of training
+  certification is ${certLevel}.
 
-Paragraph 2.02
-I, the member, agree that I'm responsible for my own actions and state that at no time will I
-knowingly or willfully endanger myself or other members or guests of the club during any diving or
-non-diving related event that the club may sponsor. I acknowledge that by signing this document I
-exempt and release South Florida Divers, Inc., its members, agents, E-Board, and all vessels (whether
-owned, operated, leased or chartered by any member or members of the club) and hold these
-entities harmless from any and all liabilities which may arise as a consequence of any acts or
-omissions on their part, including, but not limited to negligence, or gross negligence of any released
-party for any dive related activities, including but not limited to getting on and off vessels, ladder
-related injuries, and other activities including those which are incidental to scuba diving, snorkeling
-and boating.
+  Paragraph 2.02
+  I, the member, agree that I'm responsible for my own actions and state that at no time will I
+  knowingly or willfully endanger myself or other members or guests of the club during any diving or
+  non-diving related event that the club may sponsor. I acknowledge that by signing this document I
+  exempt and release South Florida Divers, Inc., its members, agents, E-Board, and all vessels (whether
+  owned, operated, leased or chartered by any member or members of the club) and hold these
+  entities harmless from any and all liabilities which may arise as a consequence of any acts or
+  omissions on their part, including, but not limited to negligence, or gross negligence of any released
+  party for any dive related activities, including but not limited to getting on and off vessels, ladder
+  related injuries, and other activities including those which are incidental to scuba diving, snorkeling
+  and boating.
 
-Paragraph 2.03
-I, the member, through my scuba diving training, have been informed that diving is a dangerous
-activity which may result in property damage, personal injury or even death should I not follow all of
-the proper diving procedures which I have been trained through my certification agency as indicated
-in Section 2, Paragraph 2.01.
+  Paragraph 2.03
+  I, the member, through my scuba diving training, have been informed that diving is a dangerous
+  activity which may result in property damage, personal injury or even death should I not follow all of
+  the proper diving procedures which I have been trained through my certification agency as indicated
+  in Section 2, Paragraph 2.01.
 
-Paragraph 2.04
-I expressly assume all risk of injury and will indemnify and hold harmless the Club, E-Board for any
-claims.
+  Paragraph 2.04
+  I expressly assume all risk of injury and will indemnify and hold harmless the Club, E-Board for any
+  claims.
 
-Paragraph 2.05
-I, the member, specifically and expressly release the club from any liability related to my personal
-injury during any event that the club may sponsor.
+  Paragraph 2.05
+  I, the member, specifically and expressly release the club from any liability related to my personal
+  injury during any event that the club may sponsor.
 
-Paragraph 2.06
-I, the member, release the coordinator from any obligation for my personal safety or personal injury
-during any event that the club may sponsor.
+  Paragraph 2.06
+  I, the member, release the coordinator from any obligation for my personal safety or personal injury
+  during any event that the club may sponsor.
 
-Paragraph 2.07
-I, the member, release the E-Board from any obligation for my personal safety or personal injury
-during any event that the club may sponsor.
+  Paragraph 2.07
+  I, the member, release the E-Board from any obligation for my personal safety or personal injury
+  during any event that the club may sponsor.
 
-Paragraph 2.08
-I, the member, understand that a current dive insurance policy, on file with the club, is mandatory for
-anyone going on club sponsored dives. The club does not in any way provide or sanction any
-individual diving insurance company.
+  Paragraph 2.08
+  I, the member, understand that a current dive insurance policy, on file with the club, is mandatory for
+  anyone going on club sponsored dives. The club does not in any way provide or sanction any
+  individual diving insurance company.
 
-Paragraph 2.09
-In consideration for being permitted to participate in the club membership and/or club activities, I
-specifically and expressly relinquish my right to bring any type of legal action against the club, its E-
-board, members, vessels and other participants, for any and all damages to property and personal
-injury including death, whether caused by negligence, gross negligence, or otherwise.
+  Paragraph 2.09
+  In consideration for being permitted to participate in the club membership and/or club activities, I
+  specifically and expressly relinquish my right to bring any type of legal action against the club, its E-
+  board, members, vessels and other participants, for any and all damages to property and personal
+  injury including death, whether caused by negligence, gross negligence, or otherwise.
 
-Section 3
-Paragraph 3.01
-I, the member, understand that my yearly membership is a privilege that can be revoked at any time
-by a majority vote of the E-Board, should my conduct be deemed inappropriate of a member of the
-club.
+  Section 3
+  Paragraph 3.01
+  I, the member, understand that my yearly membership is a privilege that can be revoked at any time
+  by a majority vote of the E-Board, should my conduct be deemed inappropriate of a member of the
+  club.
 
-Paragraph 3.02
-I, the member, understand that my membership is to be renewed yearly effective January 2nd, and
-becomes delinquent if not paid by the conclusion of the scheduled February general meeting.
+  Paragraph 3.02
+  I, the member, understand that my membership is to be renewed yearly effective January 2nd, and
+  becomes delinquent if not paid by the conclusion of the scheduled February general meeting.
 
-Paragraph 3.03
-I, the member, understand that a $5.00 reinstatement fee will be added to the normal membership
-renewal fee for any membership application received after the conclusion of the February general
-meeting.
+  Paragraph 3.03
+  I, the member, understand that a $5.00 reinstatement fee will be added to the normal membership
+  renewal fee for any membership application received after the conclusion of the February general
+  meeting.
 
-Section 4
-Paragraph 4.01
-I, the member, have read this agreement in its entirety and agree to be bound by same.
+  Section 4
+  Paragraph 4.01
+  I, the member, have read this agreement in its entirety and agree to be bound by same.
 
-THE LIABILITY ASPECT PORTION OF THIS AGREEMENT IS SPECIFICALLY INTENDED TO BE BINDING AS A
-COMPLETE BAR TO LITIGATION.
+  THE LIABILITY ASPECT PORTION OF THIS AGREEMENT IS SPECIFICALLY INTENDED TO BE BINDING AS A
+  COMPLETE BAR TO LITIGATION.
 
-Member Name (printed): ${memberName}
-Member Signature: ${data.memberSignature || '___________________________'}
-Date: ${formatDate(data.signatureDate)}
+  Member Name (printed): ${memberName}
+  Member Signature: ${data.memberSignature || '___________________________'}
+  Date: ${formatDate(data.signatureDate)}
 
-Under 18: ${data.under18 || 'No'}
-Parent/Guardian Email: ${data.guardianEmail || '___________________________'}
-Parent/Guardian Name (printed): ${data.guardianPrintName || '___________________________'}
-Parent/Guardian Signature: ${data.guardianSignature || '___________________________'}
+  Under 18: ${data.under18 || 'No'}
+  Parent/Guardian Email: ${data.guardianEmail || '___________________________'}
+  Parent/Guardian Name (printed): ${data.guardianPrintName || '___________________________'}
+  Parent/Guardian Signature: ${data.guardianSignature || '___________________________'}
 
-Family Administrator Email (if applicable): ${data.familyAdminEmail || '___________________________'}
-`;
+  Family Administrator Email (if applicable): ${data.familyAdminEmail || '___________________________'}
+  `;
 }
 
 // 2) Generate a PDF buffer from that text
@@ -294,8 +337,7 @@ app.post('/treasurer/update-payment', async (req, res) => {
 
 
 // Route to handle form submission WITH FILES
-app.post(
-    '/submit-membership',
+app.post('/submit-membership',
     upload.fields([
       { name: 'certFile', maxCount: 1 },
       { name: 'insuranceFile', maxCount: 1 }
@@ -394,7 +436,7 @@ app.post(
       ]
     };
   }
-// OPTIONAL: Email to family administrator (PDF only) if provided
+  // OPTIONAL: Email to family administrator (PDF only) if provided
   let mailToFamilyAdmin = null;
   if (data.familyAdminEmail && data.familyAdminEmail.trim() !== '') {
     mailToFamilyAdmin = {
@@ -470,8 +512,291 @@ app.post(
       }
     }
   );
-  // Admin allow toggling verification field for insurance and certification
-  app.post('/admin/update-flag', async (req, res) => {
+
+//Member portal (check if email exists, hash the password, update row in member accounts)
+app.post('/member/set-password', bodyParser.urlencoded({ extended: true }), async (req, res) => {
+    const { email, password } = req.body;
+  
+    if (!email || !password) {
+      return res.status(400).send('Missing email or password');
+    }
+  
+    try {
+      const submission = await findSubmissionByEmail(email);
+      if (!submission) {
+        return res.send('No membership found for this email. Please check the email used in the membership form.');
+      }
+  
+      const passwordHash = await bcrypt.hash(password, 10);
+  
+      await pool.query(
+        `
+        INSERT INTO member_accounts (submission_id, email, password_hash)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (email)
+        DO UPDATE SET
+          submission_id = EXCLUDED.submission_id,
+          password_hash = EXCLUDED.password_hash,
+          updated_at = NOW()
+        `,
+        [submission.id, email, passwordHash]
+      );
+  
+      res.send(`
+        <p>Password saved successfully for ${email}.</p>
+        <p><a href="/member/login">Click here to login</a></p>
+      `);
+    } catch (err) {
+      console.error('Error setting member password:', err);
+      res.status(500).send('Error saving password.');
+    }
+  });
+  
+//Member portal (Check credentials stores memberAccountID)
+app.post('/member/login', bodyParser.urlencoded({ extended: true }), async (req, res) => {
+    const { email, password } = req.body;
+  
+    if (!email || !password) {
+      return res.status(400).send('Missing email or password');
+    }
+  
+    try {
+      const result = await pool.query(
+        'SELECT * FROM member_accounts WHERE email = $1',
+        [email]
+      );
+  
+      if (result.rows.length === 0) {
+        return res.send(`
+          <p>No account found for this email. Please set a password first.</p>
+          <p><a href="/member/login">Back</a></p>
+        `);
+      }
+  
+      const account = result.rows[0];
+      const ok = await bcrypt.compare(password, account.password_hash);
+      if (!ok) {
+        return res.send(`
+          <p>Invalid password.</p>
+          <p><a href="/member/login">Back</a></p>
+        `);
+      }
+      // ✅ Login success: store in session
+      req.session.memberAccountId = account.id;
+  
+      res.redirect('/member/profile');
+    } catch (err) {
+      console.error('Error logging in member:', err);
+      res.status(500).send('Error logging in.');
+    }
+  });
+
+
+// Member profile - show only member own data
+app.get('/member/profile', async (req, res) => {
+        if (!req.session.memberAccountId) {
+          return res.redirect('/member/login');
+        }
+
+        try {
+          const accountResult = await pool.query(
+            'SELECT * FROM member_accounts WHERE id = $1',
+            [req.session.memberAccountId]
+          );
+          if (accountResult.rows.length === 0) {
+            // Session invalid
+            req.session.memberAccountId = null;
+            return res.redirect('/member/login');
+          }
+
+          const account = accountResult.rows[0];
+
+          const subResult = await pool.query(
+            'SELECT * FROM submissions WHERE id = $1',
+            [account.submission_id]
+          );
+          if (subResult.rows.length === 0) {
+            return res.send('No membership data found for this account.');
+          }
+
+          const sub = subResult.rows[0];
+
+          res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="UTF-8" />
+              <title>My Membership</title>
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <style>
+                body {
+                  font-family: Arial, sans-serif;
+                  background: #f5f5f5;
+                  margin: 0;
+                  padding: 20px;
+                }
+                .wrapper {
+                  max-width: 600px;
+                  margin: 0 auto;
+                  background: #fff;
+                  padding: 20px;
+                  box-shadow: 0 0 6px rgba(0,0,0,0.1);
+                  border-radius: 8px;
+                }
+                h1 {
+                  text-align: center;
+                }
+                label {
+                  display: block;
+                  margin-top: 10px;
+                  font-size: 0.9rem;
+                }
+                input[type="text"],
+                input[type="email"] {
+                  width: 100%;
+                  padding: 8px;
+                  border-radius: 4px;
+                  border: 1px solid #ccc;
+                  margin-top: 4px;
+                }
+                .readonly {
+                  background: #eee;
+                }
+                button {
+                  margin-top: 15px;
+                  padding: 8px 12px;
+                  border: none;
+                  border-radius: 4px;
+                  background: #0066cc;
+                  color: #fff;
+                  cursor: pointer;
+                }
+                .top-links {
+                  text-align: right;
+                  font-size: 0.8rem;
+                  margin-bottom: 10px;
+                }
+              </style>
+            </head>
+            <body>
+              <div class="wrapper">
+                <div class="top-links">
+                  Logged in as <strong>${account.email}</strong> |
+                  <a href="/member/logout">Logout</a>
+                </div>
+                <h1>My Membership</h1>
+                <form method="POST" action="/member/profile">
+                  <label>Member Name
+                    <input type="text" name="member_name" value="${sub.member_name || ''}" />
+                  </label>
+
+                  <label>Member Email
+                    <input type="email" name="member_email" value="${sub.member_email || ''}" />
+                  </label>
+
+                  <label>Guardian Email
+                    <input type="email" name="guardian_email" value="${sub.guardian_email || ''}" />
+                  </label>
+
+                  <label>Family Admin Email
+                    <input type="email" name="family_admin_email" value="${sub.family_admin_email || ''}" />
+                  </label>
+
+                  <label>Phones
+                    <input type="text" name="phones" value="${sub.phones || ''}" />
+                  </label>
+
+                  <label>Certification Agency
+                    <input type="text" name="cert_agency" value="${sub.cert_agency || ''}" />
+                  </label>
+
+                  <label>Certification Level
+                    <input type="text" name="cert_level" value="${sub.cert_level || ''}" />
+                  </label>
+
+                  <button type="submit">Save Changes</button>
+                </form>
+              </div>
+            </body>
+            </html>
+          `);
+        } catch (err) {
+          console.error('Error loading member profile:', err);
+          res.status(500).send('Error loading profile.');
+        }
+      });
+
+//member profile POST (update their own data)
+app.post('/member/profile', bodyParser.urlencoded({ extended: true }), async (req, res) => {
+  if (!req.session.memberAccountId) {
+    return res.redirect('/member/login');
+  }
+
+  try {
+    const accountResult = await pool.query(
+      'SELECT * FROM member_accounts WHERE id = $1',
+      [req.session.memberAccountId]
+    );
+    if (accountResult.rows.length === 0) {
+      req.session.memberAccountId = null;
+      return res.redirect('/member/login');
+    }
+
+    const account = accountResult.rows[0];
+
+    const {
+      member_name,
+      member_email,
+      guardian_email,
+      family_admin_email,
+      phones,
+      cert_agency,
+      cert_level
+    } = req.body;
+
+    await pool.query(
+      `
+      UPDATE submissions
+      SET
+        member_name = $1,
+        member_email = $2,
+        guardian_email = $3,
+        family_admin_email = $4,
+        phones = $5,
+        cert_agency = $6,
+        cert_level = $7
+      WHERE id = $8
+      `,
+      [
+        member_name || null,
+        member_email || null,
+        guardian_email || null,
+        family_admin_email || null,
+        phones || null,
+        cert_agency || null,
+        cert_level || null,
+        account.submission_id
+      ]
+    );
+
+    res.redirect('/member/profile');
+  } catch (err) {
+    console.error('Error updating member profile:', err);
+    res.status(500).send('Error saving profile.');
+  }
+});
+
+//Member logout
+app.get('/member/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.redirect('/member/login');
+  });
+});
+
+
+
+// Admin allow toggling verification field for insurance and certification
+app.post('/admin/update-flag', async (req, res) => {
     const { id, field } = req.body;
   
     // Only allow toggling these two fields from the admin page:
@@ -503,8 +828,8 @@ app.post(
     }
   });
   
-  // Treasure DASHBOARD
-  app.get('/treasurer', async (req, res) => {
+// Treasure DASHBOARD
+app.get('/treasurer', async (req, res) => {
     try {
       const result = await pool.query(
         `SELECT
@@ -672,10 +997,115 @@ app.post(
     }
   });
   
+//Member dashboard (one for reset password and another to login)
+app.get('/member/login', (req, res) => {
+    // If already logged in, go straight to profile
+    if (req.session.memberAccountId) {
+      return res.redirect('/member/profile');
+    }
+  
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8" />
+        <title>Member Login</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+          }
+          .wrapper {
+            max-width: 400px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            box-shadow: 0 0 6px rgba(0,0,0,0.1);
+            border-radius: 8px;
+          }
+          h1 {
+            text-align: center;
+          }
+          form {
+            margin-bottom: 20px;
+          }
+          label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.9rem;
+          }
+          input[type="email"],
+          input[type="password"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 12px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+          }
+          button {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 4px;
+            background: #0066cc;
+            color: #fff;
+            cursor: pointer;
+          }
+          .section-title {
+            font-weight: bold;
+            margin-top: 10px;
+            margin-bottom: 5px;
+          }
+          .note {
+            font-size: 0.8rem;
+            color: #555;
+            margin-bottom: 10px;
+          }
+          .error {
+            color: red;
+            margin-bottom: 10px;
+          }
+          .success {
+            color: green;
+            margin-bottom: 10px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="wrapper">
+          <h1>Member Portal</h1>
+  
+          <div class="section-title">Set / Reset Password</div>
+          <p class="note">Use the email you used on the membership form (member, guardian, or family admin email).</p>
+          <form method="POST" action="/member/set-password">
+            <label>Email</label>
+            <input type="email" name="email" required />
+            <label>New Password</label>
+            <input type="password" name="password" required minlength="6" />
+            <button type="submit">Save Password</button>
+          </form>
+  
+          <hr />
+  
+          <div class="section-title">Login</div>
+          <form method="POST" action="/member/login">
+            <label>Email</label>
+            <input type="email" name="email" required />
+            <label>Password</label>
+            <input type="password" name="password" required />
+            <button type="submit">Login</button>
+          </form>
+        </div>
+      </body>
+      </html>
+    `);
+  });
+  
 
-
-  // Admin Dashboard (protected by basic auth)
-  app.get('/admin', async (req, res) => {
+// Admin Dashboard (protected by basic auth)
+app.get('/admin', async (req, res) => {
     let rows = [];
     try {
       const result = await pool.query(
@@ -898,8 +1328,8 @@ app.post(
   }); // <-- closes app.get('/admin',...)
   
   
-  initDb();
+initDb();
 
-  app.listen(PORT, () => {
+app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
