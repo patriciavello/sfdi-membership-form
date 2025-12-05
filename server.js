@@ -66,8 +66,8 @@ async function initDb() {
         phones TEXT,
         -- NEW ADMIN FIELDS
         insurance_verified BOOLEAN DEFAULT FALSE,
+        certification_verified BOOLEAN DEFAULT FALSE,
         payment_received BOOLEAN DEFAULT FALSE,
-        certification_verified BOOLEAN DEFAULT FALSE
       )
     `);
     console.log('PostgreSQL: submissions table is ready');
@@ -90,6 +90,18 @@ app.use(
     },
     challenge: true,
     realm: 'SFDI Admin Area'
+  })
+);
+
+// Protect /treasurer with its own login
+app.use(
+  '/treasurer',
+  basicAuth({
+    users: {
+      treasurer: process.env.TREASURER_PASSWORD || 'changeme'
+    },
+    challenge: true,
+    realm: 'SFDI Treasurer Area'
   })
 );
 
@@ -251,6 +263,35 @@ function generateContractPdf(data) {
     doc.end();
   });
 }
+
+//Treasure route to update payment
+app.post('/treasurer/update-payment', async (req, res) => {
+  const { id } = req.body;
+
+  if (!id) {
+    return res.status(400).json({ success: false, error: 'Missing id' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE submissions
+       SET payment_received = NOT payment_received
+       WHERE id = $1
+       RETURNING payment_received`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Submission not found' });
+    }
+
+    return res.json({ success: true, value: result.rows[0].payment_received });
+  } catch (err) {
+    console.error('Error updating payment status:', err);
+    return res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 
 // Route to handle form submission WITH FILES
 app.post(
@@ -462,6 +503,177 @@ app.post(
     }
   });
   
+  // Treasure DASHBOARD
+  app.get('/treasurer', async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT
+          id,
+          created_at,
+          member_name,
+          member_email,
+          membership_type,
+          payment_method,
+          payment_amount,
+          payment_received
+        FROM submissions
+        WHERE payment_amount > 0
+        ORDER BY created_at DESC`
+      );
+  
+      const rows = result.rows;
+  
+      const tableRows = rows
+        .map(sub => {
+          const date = new Date(sub.created_at).toLocaleString('en-US', {
+            timeZone: 'America/New_York'
+          });
+  
+          return `
+            <tr>
+              <td>${date}</td>
+              <td>${sub.member_name || ''}</td>
+              <td>${sub.member_email || ''}</td>
+              <td>${sub.membership_type || ''}</td>
+              <td>${sub.payment_method || ''}</td>
+              <td>${sub.payment_amount != null ? sub.payment_amount : ''}</td>
+              <td>
+                <button
+                  class="status-btn ${sub.payment_received ? 'status-yes' : 'status-no'}"
+                  onclick="togglePayment(${sub.id})"
+                >
+                  ${sub.payment_received ? '✅ Received' : '❌ Not Confirmed'}
+                </button>
+              </td>
+            </tr>
+          `;
+        })
+        .join('');
+  
+      res.send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8" />
+          <title>SFDI Treasurer Portal</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              margin: 0;
+              padding: 20px;
+              background: #f5f5f5;
+            }
+            h1 {
+              text-align: center;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              background: #fff;
+              box-shadow: 0 0 6px rgba(0,0,0,0.1);
+            }
+            th, td {
+              border: 1px solid #ddd;
+              padding: 8px;
+              font-size: 0.85rem;
+            }
+            th {
+              background: #0066cc;
+              color: #fff;
+              position: sticky;
+              top: 0;
+            }
+            tr:nth-child(even) {
+              background: #f9f9f9;
+            }
+            .wrapper {
+              max-width: 900px;
+              margin: 0 auto;
+            }
+            .meta {
+              margin-bottom: 15px;
+              font-size: 0.9rem;
+              color: #555;
+            }
+            .status-btn {
+              padding: 4px 8px;
+              border-radius: 4px;
+              border: none;
+              cursor: pointer;
+              font-size: 0.9rem;
+            }
+            .status-yes {
+              background-color: #d4edda;
+            }
+            .status-no {
+              background-color: #f8d7da;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="wrapper">
+            <h1>SFDI Treasurer Portal</h1>
+            <p class="meta">
+              Logged in as <strong>${req.auth.user}</strong>.
+              Showing ${rows.length} paid submission(s) (amount > 0).
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Submitted At</th>
+                  <th>Member Name</th>
+                  <th>Member Email</th>
+                  <th>Membership Type</th>
+                  <th>Payment Method</th>
+                  <th>Amount (USD)</th>
+                  <th>Payment Received?</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tableRows}
+              </tbody>
+            </table>
+          </div>
+  
+          <script>
+            async function togglePayment(id) {
+              try {
+                const res = await fetch('/treasurer/update-payment', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({ id })
+                });
+  
+                const data = await res.json();
+  
+                if (!res.ok || !data.success) {
+                  console.error('Update failed:', data);
+                  alert('Error updating payment status. Please try again.');
+                  return;
+                }
+  
+                // Reload page to show updated status
+                location.reload();
+              } catch (err) {
+                console.error('Network error:', err);
+                alert('Network error updating payment status.');
+              }
+            }
+          </script>
+        </body>
+        </html>
+      `);
+    } catch (err) {
+      console.error('Error loading treasurer portal:', err);
+      res.status(500).send('Error loading treasurer portal');
+    }
+  });
+  
+
+
   // Admin Dashboard (protected by basic auth)
   app.get('/admin', async (req, res) => {
     let rows = [];
@@ -498,14 +710,14 @@ app.post(
       ? rows
       : [{ created_at: null }]
     )
-      .map(sub => {
+    .map(sub => {
         if (!sub.created_at) {
           return `<tr><td colspan="13" style="text-align:center;">No submissions yet.</td></tr>`;
         }
   
-        const date = new Date(sub.created_at).toLocaleString('en-US', {
-          timeZone: 'America/New_York'
-        });
+      const date = new Date(sub.created_at).toLocaleString('en-US', {
+        timeZone: 'America/New_York'
+      });
   
         return `
           <tr>
@@ -522,7 +734,6 @@ app.post(
             <td>${sub.cert_agency || ''}</td>
             <td>${sub.cert_level || ''}</td>
             <td>${sub.phones || ''}</td>
-
             <!-- Insurance: clickable toggle -->
             <td>
               <button
@@ -532,7 +743,6 @@ app.post(
                 ${sub.insurance_verified ? '✅ Yes' : '❌ No'}
               </button>
             </td>
-
             <!-- Payment: still READ-ONLY on admin -->
             <td>
               ${
@@ -541,7 +751,6 @@ app.post(
                   : 'N/A'
               }
             </td>
-
             <!-- Certification: clickable toggle -->
             <td>
               <button
@@ -553,8 +762,6 @@ app.post(
             </td>
           </tr>
         `;
-
-
   })
       .join('');
   
