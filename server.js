@@ -688,7 +688,7 @@ app.post(
         </body>
         </html>
       `);
-  
+  }); // <-- closes app.get('/admin',...)
   
   
   initDb();
