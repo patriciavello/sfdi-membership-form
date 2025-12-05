@@ -987,8 +987,6 @@ app.get('/member/logout', (req, res) => {
   });
 });
 
-
-
 // Admin allow toggling verification field for insurance and certification
 app.post('/admin/update-flag', async (req, res) => {
     const { id, field } = req.body;
@@ -1389,7 +1387,34 @@ This code is valid for 15 minutes. If you did not request this, you can ignore t
   }
 });
 
-  
+//Admin: Route to serve the insurance image
+app.get('/admin/insurance-image/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT insurance_file, insurance_file_mime
+      FROM submissions
+      WHERE id = $1
+      `,
+      [id]
+    );
+
+    if (result.rows.length === 0 || !result.rows[0].insurance_file) {
+      return res.status(404).send('No insurance file found for this submission.');
+    }
+
+    const row = result.rows[0];
+
+    res.setHeader('Content-Type', row.insurance_file_mime || 'application/octet-stream');
+    res.send(row.insurance_file);
+  } catch (err) {
+    console.error('Error fetching insurance image:', err);
+    res.status(500).send('Error retrieving insurance file.');
+  }
+});
+
 
 // Admin Dashboard (protected by basic auth)
 app.get('/admin', async (req, res) => {
@@ -1413,7 +1438,8 @@ app.get('/admin', async (req, res) => {
           phones,
           insurance_verified,
           payment_received,
-          certification_verified
+          certification_verified,
+          insurance_file_mime
         FROM submissions
         ORDER BY created_at DESC`
       );
@@ -1451,6 +1477,20 @@ app.get('/admin', async (req, res) => {
             <td>${sub.cert_agency || ''}</td>
             <td>${sub.cert_level || ''}</td>
             <td>${sub.phones || ''}</td>
+            <!-- NEW: Insurance card thumbnail -->
+            <td>
+              ${
+                sub.insurance_file_mime && sub.insurance_file_mime.startsWith('image/')
+                  ? `<a href="/admin/insurance-image/${sub.id}" target="_blank">
+                      <img src="/admin/insurance-image/${sub.id}"
+                            alt="Insurance card"
+                            style="max-width:150px; max-height:100px; object-fit:contain;" />
+                    </a>`
+                  : (sub.insurance_file_mime
+                      ? `<a href="/admin/insurance-image/${sub.id}" target="_blank">View file</a>`
+                      : 'No file')
+              }
+            </td>
             <!-- Insurance: clickable toggle -->
             <td>
               <button
@@ -1568,6 +1608,7 @@ app.get('/admin', async (req, res) => {
                   <th>Cert Agency</th>
                   <th>Cert Level</th>
                   <th>Phones</th>
+                  <th>Insurance Card</th>
                   <!-- NEW -->
                   <th>Insurance OK?</th>
                   <th>Payment Received?</th>
