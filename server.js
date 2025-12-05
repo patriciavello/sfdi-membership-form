@@ -95,8 +95,18 @@ async function initDb() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS member_password_tokens (
+        email TEXT PRIMARY KEY,
+        code TEXT NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
 
-    console.log('PostgreSQL: submissions & member_accounts tables are ready');
+    console.log('PostgreSQL: submissions, member_accounts, member_password_tokens tables are ready');
+
+
   } catch (err) {
     console.error('Error initializing database:', err);
   }
@@ -146,6 +156,11 @@ async function findSubmissionByEmail(email) {
     [email]
   );
   return result.rows[0] || null;
+}
+
+//Helper - Generate a 6-digit code
+function generateVerificationCode() {
+  return String(Math.floor(100000 + Math.random() * 900000)); // 6 digits
 }
 
 
@@ -516,42 +531,95 @@ app.post('/submit-membership',
 
 //Member portal (check if email exists, hash the password, update row in member accounts)
 app.post('/member/set-password', bodyParser.urlencoded({ extended: true }), async (req, res) => {
-    const { email, password } = req.body;
-  
-    if (!email || !password) {
-      return res.status(400).send('Missing email or password');
-    }
-  
-    try {
-      const submission = await findSubmissionByEmail(email);
-      if (!submission) {
-        return res.send('No membership found for this email. Please check the email used in the membership form.');
-      }
-  
-      const passwordHash = await bcrypt.hash(password, 10);
-  
-      await pool.query(
-        `
-        INSERT INTO member_accounts (submission_id, email, password_hash)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (email)
-        DO UPDATE SET
-          submission_id = EXCLUDED.submission_id,
-          password_hash = EXCLUDED.password_hash,
-          updated_at = NOW()
-        `,
-        [submission.id, email, passwordHash]
-      );
-  
-      res.send(`
-        <p>Password saved successfully for ${email}.</p>
-        <p><a href="/member/login">Click here to login</a></p>
+  const { email, password, code } = req.body;
+
+  if (!email || !password || !code) {
+    return res.send(`
+      <p>Email, verification code, and password are all required.</p>
+      <p><a href="/member/login">Back</a></p>
+    `);
+  }
+
+  try {
+    // 1) Verify email belongs to a submission
+    const submission = await findSubmissionByEmail(email);
+    if (!submission) {
+      return res.send(`
+        <p>No membership found for this email. Please use the email used on the membership form.</p>
+        <p><a href="/member/login">Back</a></p>
       `);
-    } catch (err) {
-      console.error('Error setting member password:', err);
-      res.status(500).send('Error saving password.');
     }
-  });
+
+    // 2) Check code in DB
+    const tokenResult = await pool.query(
+      `
+      SELECT * FROM member_password_tokens
+      WHERE email = $1
+      `,
+      [email]
+    );
+
+    if (tokenResult.rows.length === 0) {
+      return res.send(`
+        <p>No verification code found for this email. Please request a new code.</p>
+        <p><a href="/member/login">Back</a></p>
+      `);
+    }
+
+    const token = tokenResult.rows[0];
+
+    const now = new Date();
+    const expiresAt = new Date(token.expires_at);
+
+    if (token.code !== code.trim()) {
+      return res.send(`
+        <p>Invalid verification code. Please check the code and try again.</p>
+        <p><a href="/member/login">Back</a></p>
+      `);
+    }
+
+    if (now > expiresAt) {
+      return res.send(`
+        <p>This verification code has expired. Please request a new code.</p>
+        <p><a href="/member/login">Back</a></p>
+      `);
+    }
+
+    // 3) Code is valid → hash password and upsert member_accounts
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    await pool.query(
+      `
+      INSERT INTO member_accounts (submission_id, email, password_hash)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (email)
+      DO UPDATE SET
+        submission_id = EXCLUDED.submission_id,
+        password_hash = EXCLUDED.password_hash,
+        updated_at = NOW()
+      `,
+      [submission.id, email, passwordHash]
+    );
+
+    // 4) Optionally delete the used token
+    await pool.query(
+      'DELETE FROM member_password_tokens WHERE email = $1',
+      [email]
+    );
+
+    res.send(`
+      <p>Password saved successfully for ${email}.</p>
+      <p><a href="/member/login">Click here to login</a></p>
+    `);
+  } catch (err) {
+    console.error('Error setting member password with code:', err);
+    res.status(500).send(`
+      <p>Error saving password.</p>
+      <p><a href="/member/login">Back</a></p>
+    `);
+  }
+});
+
   
 //Member portal (Check credentials stores memberAccountID)
 app.post('/member/login', bodyParser.urlencoded({ extended: true }), async (req, res) => {
@@ -1007,109 +1075,180 @@ app.get('/treasurer', async (req, res) => {
   
 //Member dashboard (one for reset password and another to login)
 app.get('/member/login', (req, res) => {
-    // If already logged in, go straight to profile
-    if (req.session.memberAccountId) {
-      return res.redirect('/member/profile');
-    }
-  
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8" />
-        <title>Member Login</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            background: #f5f5f5;
-            margin: 0;
-            padding: 20px;
-          }
-          .wrapper {
-            max-width: 400px;
-            margin: 0 auto;
-            background: #fff;
-            padding: 20px;
-            box-shadow: 0 0 6px rgba(0,0,0,0.1);
-            border-radius: 8px;
-          }
-          h1 {
-            text-align: center;
-          }
-          form {
-            margin-bottom: 20px;
-          }
-          label {
-            display: block;
-            margin-bottom: 6px;
-            font-size: 0.9rem;
-          }
-          input[type="email"],
-          input[type="password"] {
-            width: 100%;
-            padding: 8px;
-            margin-bottom: 12px;
-            border-radius: 4px;
-            border: 1px solid #ccc;
-          }
-          button {
-            padding: 8px 12px;
-            border: none;
-            border-radius: 4px;
-            background: #0066cc;
-            color: #fff;
-            cursor: pointer;
-          }
-          .section-title {
-            font-weight: bold;
-            margin-top: 10px;
-            margin-bottom: 5px;
-          }
-          .note {
-            font-size: 0.8rem;
-            color: #555;
-            margin-bottom: 10px;
-          }
-          .error {
-            color: red;
-            margin-bottom: 10px;
-          }
-          .success {
-            color: green;
-            margin-bottom: 10px;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="wrapper">
-          <h1>Member Portal</h1>
-  
-          <div class="section-title">Set / Reset Password</div>
-          <p class="note">Use the email you used on the membership form (member, guardian, or family admin email).</p>
-          <form method="POST" action="/member/set-password">
-            <label>Email</label>
-            <input type="email" name="email" required />
-            <label>New Password</label>
-            <input type="password" name="password" required minlength="6" />
-            <button type="submit">Save Password</button>
-          </form>
-  
-          <hr />
-  
-          <div class="section-title">Login</div>
-          <form method="POST" action="/member/login">
-            <label>Email</label>
-            <input type="email" name="email" required />
-            <label>Password</label>
-            <input type="password" name="password" required />
-            <button type="submit">Login</button>
-          </form>
-        </div>
-      </body>
-      </html>
+  if (req.session.memberAccountId) {
+    return res.redirect('/member/profile');
+  }
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8" />
+      <title>Member Login</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          background: #f5f5f5;
+          margin: 0;
+          padding: 20px;
+        }
+        .wrapper {
+          max-width: 420px;
+          margin: 0 auto;
+          background: #fff;
+          padding: 20px;
+          box-shadow: 0 0 6px rgba(0,0,0,0.1);
+          border-radius: 8px;
+        }
+        h1 {
+          text-align: center;
+        }
+        form {
+          margin-bottom: 20px;
+        }
+        label {
+          display: block;
+          margin-bottom: 6px;
+          font-size: 0.9rem;
+        }
+        input[type="email"],
+        input[type="password"],
+        input[type="text"] {
+          width: 100%;
+          padding: 8px;
+          margin-bottom: 12px;
+          border-radius: 4px;
+          border: 1px solid #ccc;
+        }
+        button {
+          padding: 8px 12px;
+          border: none;
+          border-radius: 4px;
+          background: #0066cc;
+          color: #fff;
+          cursor: pointer;
+        }
+        .section-title {
+          font-weight: bold;
+          margin-top: 10px;
+          margin-bottom: 5px;
+        }
+        .note {
+          font-size: 0.8rem;
+          color: #555;
+          margin-bottom: 10px;
+        }
+        hr {
+          margin: 20px 0;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="wrapper">
+        <h1>Member Portal</h1>
+
+        <div class="section-title">1) Request Verification Code</div>
+        <p class="note">Use the email you used on the membership form (member, guardian, or family admin email). We'll email you a 6-digit code.</p>
+        <form method="POST" action="/member/request-code">
+          <label>Email</label>
+          <input type="email" name="email" required />
+          <button type="submit">Send Code</button>
+        </form>
+
+        <hr />
+
+        <div class="section-title">2) Set / Reset Password (with code)</div>
+        <p class="note">After you receive the code by email, enter it here along with a new password.</p>
+        <form method="POST" action="/member/set-password">
+          <label>Email</label>
+          <input type="email" name="email" required />
+          <label>Verification Code</label>
+          <input type="text" name="code" required minlength="6" maxlength="6" />
+          <label>New Password</label>
+          <input type="password" name="password" required minlength="6" />
+          <button type="submit">Save Password</button>
+        </form>
+
+        <hr />
+
+        <div class="section-title">3) Login</div>
+        <form method="POST" action="/member/login">
+          <label>Email</label>
+          <input type="email" name="email" required />
+          <label>Password</label>
+          <input type="password" name="password" required />
+          <button type="submit">Login</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+//Member: Request verification code
+app.post('/member/request-code', bodyParser.urlencoded({ extended: true }), async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.send(`
+      <p>Email is required.</p>
+      <p><a href="/member/login">Back</a></p>
     `);
-  });
+  }
+
+  try {
+    const submission = await findSubmissionByEmail(email);
+    if (!submission) {
+      // For privacy, we don't say "no such email" explicitly.
+      return res.send(`
+        <p>If an account exists for this email, a verification code has been sent.</p>
+        <p><a href="/member/login">Back</a></p>
+      `);
+    }
+
+    const code = generateVerificationCode();
+
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
+
+    // Store or update the code
+    await pool.query(
+      `
+      INSERT INTO member_password_tokens (email, code, expires_at)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (email)
+      DO UPDATE SET
+        code = EXCLUDED.code,
+        expires_at = EXCLUDED.expires_at,
+        created_at = NOW()
+      `,
+      [email, code, expiresAt]
+    );
+
+    // Send email with the code
+    await transporter.sendMail({
+      from: '"SFDI Membership" <sfdipvello@gmail.com>',
+      to: email,
+      subject: 'SFDI Member Portal Verification Code',
+      text: `Your verification code for the SFDI Member Portal is: ${code}
+
+This code is valid for 15 minutes. If you did not request this, you can ignore this email.`
+    });
+
+    res.send(`
+      <p>If an account exists for ${email}, a verification code has been sent.</p>
+      <p>Please check your email, then go back and use the "Set / Reset Password" form with that code.</p>
+      <p><a href="/member/login">Back to Member Portal</a></p>
+    `);
+  } catch (err) {
+    console.error('Error requesting verification code:', err);
+    res.status(500).send(`
+      <p>Error sending verification code.</p>
+      <p><a href="/member/login">Back</a></p>
+    `);
+  }
+});
+
   
 
 // Admin Dashboard (protected by basic auth)
