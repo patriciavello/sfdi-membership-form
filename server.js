@@ -77,6 +77,7 @@ async function initDb() {
         family_admin_email TEXT,
         cert_agency TEXT,
         cert_level TEXT,
+        cert_number TEXT,
         phones TEXT,
         -- NEW ADMIN FIELDS
         insurance_verified BOOLEAN DEFAULT FALSE,
@@ -106,8 +107,7 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // Protect /admin with basic auth
-app.use(
-  '/admin',
+app.use('/admin',
   basicAuth({
     users: {
       // username: password
@@ -119,8 +119,7 @@ app.use(
 );
 
 // Protect /treasurer with its own login
-app.use(
-  '/treasurer',
+app.use('/treasurer',
   basicAuth({
     users: {
       treasurer: process.env.TREASURER_PASSWORD || 'changeme'
@@ -481,6 +480,7 @@ app.post('/submit-membership',
           family_admin_email,
           cert_agency,
           cert_level,
+          cert_number,
           phones
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -497,6 +497,7 @@ app.post('/submit-membership',
         data.familyAdminEmail || '',
         data.certAgency || '',
         data.certLevel || '',
+        data.certCardNumber || '',
         data.phones || ''
       ]
     );
@@ -714,6 +715,10 @@ app.get('/member/profile', async (req, res) => {
                     <input type="text" name="cert_level" value="${sub.cert_level || ''}" />
                   </label>
 
+                  <label>Certification Number
+                    <input type="text" name="cert_number" value="${sub.cert_number || ''}" />
+                  </label>
+
                   <button type="submit">Save Changes</button>
                 </form>
               </div>
@@ -751,7 +756,8 @@ app.post('/member/profile', bodyParser.urlencoded({ extended: true }), async (re
       family_admin_email,
       phones,
       cert_agency,
-      cert_level
+      cert_level,
+      cert_number
     } = req.body;
 
     await pool.query(
@@ -765,7 +771,8 @@ app.post('/member/profile', bodyParser.urlencoded({ extended: true }), async (re
         phones = $5,
         cert_agency = $6,
         cert_level = $7
-      WHERE id = $8
+        cert_number = $8
+      WHERE id = $9
       `,
       [
         member_name || null,
@@ -775,6 +782,7 @@ app.post('/member/profile', bodyParser.urlencoded({ extended: true }), async (re
         phones || null,
         cert_agency || null,
         cert_level || null,
+        cert_number || null,
         account.submission_id
       ]
     );
