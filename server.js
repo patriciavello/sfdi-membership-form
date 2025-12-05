@@ -82,7 +82,7 @@ async function initDb() {
         -- NEW ADMIN FIELDS
         insurance_verified BOOLEAN DEFAULT FALSE,
         certification_verified BOOLEAN DEFAULT FALSE,
-        payment_received BOOLEAN DEFAULT FALSE,
+        payment_received BOOLEAN DEFAULT FALSE
       )
     `);
     await pool.query(`
@@ -274,7 +274,7 @@ function buildContractText(data) {
   `;
 }
 
-// 2) Generate a PDF buffer from that text
+// Generate a PDF buffer from that text
 function generateContractPdf(data) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50 });
@@ -483,7 +483,7 @@ app.post('/submit-membership',
           cert_number,
           phones
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       `,
       [
         data.memberPrintName || data.name || '',
@@ -770,7 +770,7 @@ app.post('/member/profile', bodyParser.urlencoded({ extended: true }), async (re
         family_admin_email = $4,
         phones = $5,
         cert_agency = $6,
-        cert_level = $7
+        cert_level = $7,
         cert_number = $8
       WHERE id = $9
       `,
