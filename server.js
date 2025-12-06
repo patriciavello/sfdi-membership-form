@@ -1022,7 +1022,9 @@ app.post('/member/profile', bodyParser.urlencoded({ extended: true }), async (re
 });
 
 //Member Documents 
-app.post('/member/documents',
+//Member Documents 
+app.post(
+  '/member/documents',
   upload.fields([
     { name: 'certFile', maxCount: 1 },
     { name: 'insuranceFile', maxCount: 1 }
@@ -1033,7 +1035,7 @@ app.post('/member/documents',
     }
 
     try {
-      // 1) Load member account to know which submission row to update
+      // 1) Load member account
       const accountResult = await pool.query(
         'SELECT * FROM member_accounts WHERE id = $1',
         [req.session.memberAccountId]
@@ -1046,51 +1048,93 @@ app.post('/member/documents',
 
       const account = accountResult.rows[0];
 
-      const files = req.files || {};
-      const certFile = files.certFile && files.certFile[0] ? files.certFile[0] : null;
-      const insuranceFile = files.insuranceFile && files.insuranceFile[0] ? files.insuranceFile[0] : null;
+      // 2) Load submission row so we have member_name for OCR
+      const subResult = await pool.query(
+        'SELECT * FROM submissions WHERE id = $1',
+        [account.submission_id]
+      );
 
-      // If no files provided, just redirect back
+      if (subResult.rows.length === 0) {
+        // No submission record – nothing to update
+        return res.redirect('/member/profile');
+      }
+
+      const submission = subResult.rows[0];
+
+      // 3) Grab uploaded files
+      const files = req.files || {};
+      const certFile =
+        files.certFile && files.certFile[0] ? files.certFile[0] : null;
+      const insuranceFile =
+        files.insuranceFile && files.insuranceFile[0] ? files.insuranceFile[0] : null;
+
+      // If no files, just go back
       if (!certFile && !insuranceFile) {
         return res.redirect('/member/profile');
       }
 
-      // 2) Build dynamic UPDATE based on which file(s) are present
+      // 4) Build dynamic UPDATE based on which file(s) are present
       const sets = [];
       const values = [];
       let idx = 1;
 
+      // --- Certification file columns ---
       if (certFile) {
         sets.push(`cert_file = $${idx++}`);
         values.push(certFile.buffer);
+
         sets.push(`cert_file_name = $${idx++}`);
         values.push(certFile.originalname);
+
         sets.push(`cert_file_mime = $${idx++}`);
         values.push(certFile.mimetype);
       }
 
+      // --- Insurance file columns + OCR ---
+      let danInfo = null;
+
       if (insuranceFile) {
+        // Store the raw insurance file
         sets.push(`insurance_file = $${idx++}`);
         values.push(insuranceFile.buffer);
+
         sets.push(`insurance_file_name = $${idx++}`);
         values.push(insuranceFile.originalname);
+
         sets.push(`insurance_file_mime = $${idx++}`);
         values.push(insuranceFile.mimetype);
+
+        // If it's an image, try OCR / DAN extraction
+        if (
+          insuranceFile.mimetype &&
+          insuranceFile.mimetype.startsWith('image/')
+        ) {
+          danInfo = await extractDanInfoFromInsurance(
+            insuranceFile.buffer,
+            submission.member_name || submission.member_email || ''
+          );
+        }
       }
 
-      // If OCR succeeded and name matched, update DAN fields too
+      // 5) If OCR found valid DAN info, update those fields too
       if (danInfo) {
-        sets.push(`dan_id = $${idx++}`);
-        values.push(danInfo.danId || null);
-        sets.push(`dan_expiration_date = $${idx++}`);
-        values.push(danInfo.danExpirationDate || null);
+        if (danInfo.danId) {
+          sets.push(`dan_id = $${idx++}`);
+          values.push(danInfo.danId);
+        }
+
+        if (danInfo.danExpirationDate) {
+          sets.push(`dan_expiration_date = $${idx++}`);
+          values.push(danInfo.danExpirationDate);
+        }
       }
 
+      // Safety check
       if (!sets.length) {
         return res.redirect('/member/profile');
       }
 
-      // Append WHERE id = $idx
+      // WHERE id = submission_id
       values.push(account.submission_id);
 
       const sql = `
@@ -1108,6 +1152,7 @@ app.post('/member/documents',
     }
   }
 );
+
 
 
 //Member logout
