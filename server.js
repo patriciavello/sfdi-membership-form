@@ -360,19 +360,7 @@ async function extractDanInfoFromInsurance(buffer, memberName) {
       return null;
     }
 
-    const normalizedCardName = normalizeName(parsed.cardName);
-    const normalizedMemberName = normalizeName(memberName);
-
-    // By default we allow storing; we only block if there IS a card name
-    // and it clearly does NOT match the member name.
-    if (normalizedCardName && normalizedMemberName &&
-        normalizedCardName !== normalizedMemberName) {
-      console.log('OCR: Name mismatch, not storing DAN info:', {
-        cardName: parsed.cardName,
-        memberName
-      });
-      return null;
-    }
+    console.log('OCR final DAN info to store:', parsed);
 
     const expDate = parseExpirationDate(parsed.expirationRaw);
 
@@ -385,6 +373,7 @@ async function extractDanInfoFromInsurance(buffer, memberName) {
     return null;
   }
 }
+
 
 
 
@@ -996,10 +985,17 @@ app.get('/member/profile', async (req, res) => {
                   <a href="/member/logout">Logout</a>
                 </div>
                 <h1>My Membership</h1>
+
+                <div style="background:#eef7ff; padding:10px; border-radius:6px; margin-bottom:15px; font-size:0.9rem;">
+                  <p><strong>DAN ID:</strong> ${sub.dan_id || 'Not on file yet'}</p>
+                  <p><strong>DAN Insurance Expiration:</strong> ${sub.dan_expiration_date || 'Not on file yet'}</p>
+                </div>
+
                 <form method="POST" action="/member/profile">
                   <label>Member Name
                     <input type="text" name="member_name" value="${sub.member_name || ''}" />
                   </label>
+
 
                   <label>Member Email
                     <input type="email" name="member_email" value="${sub.member_email || ''}" />
@@ -1124,8 +1120,7 @@ app.post('/member/profile', bodyParser.urlencoded({ extended: true }), async (re
 });
 
 // Member Documents – update stored cert/insurance and re-run OCR on insurance
-app.post(
-  '/member/documents',
+app.post('/member/documents',
   upload.fields([
     { name: 'certFile', maxCount: 1 },
     { name: 'insuranceFile', maxCount: 1 }
