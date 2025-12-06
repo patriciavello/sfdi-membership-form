@@ -1021,8 +1021,7 @@ app.post('/member/profile', bodyParser.urlencoded({ extended: true }), async (re
   }
 });
 
-//Member Documents 
-//Member Documents 
+// Member Documents – update stored cert/insurance and re-run OCR on insurance
 app.post(
   '/member/documents',
   upload.fields([
@@ -1035,7 +1034,7 @@ app.post(
     }
 
     try {
-      // 1) Load member account
+      // 1) Load member account to know which submission row to update
       const accountResult = await pool.query(
         'SELECT * FROM member_accounts WHERE id = $1',
         [req.session.memberAccountId]
@@ -1048,63 +1047,75 @@ app.post(
 
       const account = accountResult.rows[0];
 
-      // 2) Load submission row so we have member_name for OCR
+      // We also load the submission so we know the member_name for OCR name matching
       const subResult = await pool.query(
         'SELECT * FROM submissions WHERE id = $1',
         [account.submission_id]
       );
 
       if (subResult.rows.length === 0) {
-        // No submission record – nothing to update
-        return res.redirect('/member/profile');
+        return res.send('No membership data found for this account.');
       }
 
       const submission = subResult.rows[0];
 
-      // 3) Grab uploaded files
       const files = req.files || {};
       const certFile =
         files.certFile && files.certFile[0] ? files.certFile[0] : null;
       const insuranceFile =
-        files.insuranceFile && files.insuranceFile[0] ? files.insuranceFile[0] : null;
+        files.insuranceFile && files.insuranceFile[0]
+          ? files.insuranceFile[0]
+          : null;
 
-      // If no files, just go back
+      // If no files provided, just redirect back
       if (!certFile && !insuranceFile) {
         return res.redirect('/member/profile');
       }
 
-      // 4) Build dynamic UPDATE based on which file(s) are present
+      // 2) Build dynamic UPDATE based on which file(s) are present
       const sets = [];
       const values = [];
       let idx = 1;
 
-      // --- Certification file columns ---
+      // --- Certification file updates ---
       if (certFile) {
-        sets.push(`cert_file = $${idx++}`);
+        sets.push(`cert_file = $${idx}`);
         values.push(certFile.buffer);
+        idx++;
 
-        sets.push(`cert_file_name = $${idx++}`);
-        values.push(certFile.originalname);
+        sets.push(`cert_file_name = $${idx}`);
+        values.push(certFile.originalname || null);
+        idx++;
 
-        sets.push(`cert_file_mime = $${idx++}`);
-        values.push(certFile.mimetype);
+        sets.push(`cert_file_mime = $${idx}`);
+        values.push(certFile.mimetype || null);
+        idx++;
+
+        // Optionally reset verification flag when member uploads a new cert
+        sets.push(`certification_verified = FALSE`);
       }
 
-      // --- Insurance file columns + OCR ---
+      // --- Insurance file updates (plus OCR) ---
       let danInfo = null;
 
       if (insuranceFile) {
-        // Store the raw insurance file
-        sets.push(`insurance_file = $${idx++}`);
+        // Store the new file itself
+        sets.push(`insurance_file = $${idx}`);
         values.push(insuranceFile.buffer);
+        idx++;
 
-        sets.push(`insurance_file_name = $${idx++}`);
-        values.push(insuranceFile.originalname);
+        sets.push(`insurance_file_name = $${idx}`);
+        values.push(insuranceFile.originalname || null);
+        idx++;
 
-        sets.push(`insurance_file_mime = $${idx++}`);
-        values.push(insuranceFile.mimetype);
+        sets.push(`insurance_file_mime = $${idx}`);
+        values.push(insuranceFile.mimetype || null);
+        idx++;
 
-        // If it's an image, try OCR / DAN extraction
+        // Optionally reset verification flag when member uploads a new insurance
+        sets.push(`insurance_verified = FALSE`);
+
+        // Run OCR only if it's an image (same logic as /submit-membership)
         if (
           insuranceFile.mimetype &&
           insuranceFile.mimetype.startsWith('image/')
@@ -1114,45 +1125,46 @@ app.post(
             submission.member_name || submission.member_email || ''
           );
         }
-      }
 
-      // 5) If OCR found valid DAN info, update those fields too
-      if (danInfo) {
-        if (danInfo.danId) {
-          sets.push(`dan_id = $${idx++}`);
+        // If OCR found DAN data, include them in the UPDATE
+        if (danInfo && danInfo.danId) {
+          sets.push(`dan_id = $${idx}`);
           values.push(danInfo.danId);
+          idx++;
         }
 
-        if (danInfo.danExpirationDate) {
-          sets.push(`dan_expiration_date = $${idx++}`);
+        if (danInfo && danInfo.danExpirationDate) {
+          sets.push(`dan_expiration_date = $${idx}`);
           values.push(danInfo.danExpirationDate);
+          idx++;
         }
       }
 
-      // Safety check
-      if (!sets.length) {
+      // Safety check – though we already return if no files
+      if (sets.length === 0) {
         return res.redirect('/member/profile');
       }
 
-      // WHERE id = submission_id
-      values.push(account.submission_id);
-
+      // 3) Finalize UPDATE with WHERE clause
       const sql = `
         UPDATE submissions
         SET ${sets.join(', ')}
         WHERE id = $${idx}
       `;
+      values.push(account.submission_id);
 
       await pool.query(sql, values);
 
+      // 4) Back to profile
       res.redirect('/member/profile');
     } catch (err) {
       console.error('Error updating member documents:', err);
-      res.status(500).send('Error updating documents.');
+      res
+        .status(500)
+        .send('Error updating documents. Please try again later.');
     }
   }
 );
-
 
 
 //Member logout
