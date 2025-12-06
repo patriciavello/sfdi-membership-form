@@ -199,8 +199,15 @@ function getOcrWorker() {
 async function runOcrOnBuffer(buffer) {
   const worker = await getOcrWorker();
   const { data: { text } } = await worker.recognize(buffer);
+
+  // Log a snippet so we can see what Tesseract actually reads
+  console.log('--- OCR RAW TEXT (first 500 chars) ---');
+  console.log(text.slice(0, 500));
+  console.log('--- END OCR RAW TEXT ---');
+
   return text;
 }
+
 
 // Normalize names to compare (upper-case, remove extra spaces/punctuation)
 function normalizeName(name) {
@@ -216,39 +223,75 @@ function normalizeName(name) {
 function parseDanInfoFromText(text) {
   if (!text) return null;
 
-  // Check if it looks like a DAN card at all
-  if (!/DAN|DIVERS ALERT NETWORK/i.test(text)) {
-    return null;
+  // Try to confirm it's at least *probably* a DAN card, but don't bail too early
+  const hasDanWord = /DAN|DIVERS ALERT NETWORK/i.test(text);
+  if (!hasDanWord) {
+    console.log('OCR: text does not contain DAN keyword, continuing with best-effort parse.');
   }
 
-  // DAN ID: e.g. "DAN ID# 3293419"
-  const idMatch = text.match(
-    /(?:DAN\s*ID|Member\s*(?:ID|No\.?|Number)|ID\s*#)\s*[:#]?\s*([A-Z0-9\-]+)/i
+  // ---------- DAN ID ----------
+  // Strategy: pick the first 5–9 digit number that is NOT obviously a year (1900–2099).
+  let danId = null;
+  const numberMatches = text.match(/\b\d{5,9}\b/g);
+  if (numberMatches) {
+    for (const n of numberMatches) {
+      const val = parseInt(n, 10);
+      if (val < 1900 || val > 2099) {
+        danId = n;
+        break;
+      }
+    }
+  }
+
+  // ---------- Expiration date (raw string) ----------
+  let expirationRaw = null;
+  let m;
+
+  // 1) Look for "Valid Until/Thru/Expires" style phrases first
+  m = text.match(
+    /(?:Valid\s*Until|Valid\s*Thru|Expires(?:\s*On)?|Exp\.?\s*Date)[^\n]*?([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|[A-Za-z]{3,9}\s+\d{4}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{1,2}[\/\-]\d{2,4})/i
   );
+  if (m) {
+    expirationRaw = m[1].trim();
+  }
 
-  // Allow:
-  // - "VALID UNTIL May 31, 2026"
-  // - "Valid Thru 05/31/2026"
-  // - "Expires 05/2026"
-  const expMatch = text.match(
-    /(?:Valid\s*Until|Valid\s*Thru|Expires(?:\s*On)?|Exp\.?\s*Date)[^\n]*?\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|[A-Za-z]{3,9}\s+\d{4}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{1,2}[\/\-]\d{2,4})/i
-  );
+  // 2) If that fails, just grab the first "Month day, year" we see
+  if (!expirationRaw) {
+    m = text.match(/([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/);
+    if (m) {
+      expirationRaw = m[1].trim();
+    }
+  }
 
-  // Name line: e.g. "MEMBER Patricia Pinto Coelho Vello"
-  const nameMatch = text.match(
-    /(?:Name|Member)\s*[:\-]?\s*([A-Z ,.'-]{3,})/i
-  );
+  // 3) Or a "Month year" pattern
+  if (!expirationRaw) {
+    m = text.match(/([A-Za-z]{3,9}\s+\d{4})/);
+    if (m) {
+      expirationRaw = m[1].trim();
+    }
+  }
 
-  const danId = idMatch ? idMatch[1].trim() : null;
-  const expirationRaw = expMatch ? expMatch[1].trim() : null;
-  const cardName = nameMatch ? nameMatch[1].trim() : null;
+  // ---------- Name on card (best-effort) ----------
+  let cardName = null;
+  const nameMatch = text.match(/(?:Name|Member)[^\n]*?([A-Za-z ,.'-]{3,})/i);
+  if (nameMatch) {
+    cardName = nameMatch[1].trim();
+  }
 
-  return {
+  console.log('OCR parsed candidate DAN info:', {
     danId,
     expirationRaw,
     cardName
-  };
+  });
+
+  // If we got nothing at all, treat as failure
+  if (!danId && !expirationRaw) {
+    return null;
+  }
+
+  return { danId, expirationRaw, cardName };
 }
+
 
 
 // Convert various date formats to ISO "YYYY-MM-DD"
@@ -308,7 +351,6 @@ function parseExpirationDate(expirationRaw) {
 }
 
 
-// High-level helper: given buffer + memberName → maybe DAN info to store
 async function extractDanInfoFromInsurance(buffer, memberName) {
   try {
     const text = await runOcrOnBuffer(buffer);
