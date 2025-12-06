@@ -222,9 +222,18 @@ function parseDanInfoFromText(text) {
   }
 
   // Very generic guesses – you can tweak based on real cards
-  const idMatch = text.match(/(?:DAN\s*ID|Member\s*(?:ID|No\.?|Number)|ID\s*#)\s*[:#]?\s*([A-Z0-9\-]+)/i);
-  const expMatch = text.match(/(?:Valid\s*Until|Valid\s*Thru|Expires(?:\s*On)?|Exp\.?\s*Date)\s*[:\s]*([0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})/i);
-  const nameMatch = text.match(/(?:Name|Member)\s*[:\-]\s*([A-Z ,.'-]{3,})/i);
+  const idMatch = text.match(
+    /(?:DAN\s*ID|Member\s*(?:ID|No\.?|Number)|ID\s*#)\s*[:#]?\s*([A-Z0-9\-]+)/i
+  );
+
+  // Allow MM/DD/YYYY, MM-DD-YYYY, or MM/YYYY, MM-YYYY
+  const expMatch = text.match(
+    /(?:Valid\s*Until|Valid\s*Thru|Expires(?:\s*On)?|Exp\.?\s*Date)\s*[:\s]*([0-9]{1,2}[\/\-][0-9]{1,2}(?:[\/\-][0-9]{2,4})?)/i
+  );
+
+  const nameMatch = text.match(
+    /(?:Name|Member)\s*[:\-]\s*([A-Z ,.'-]{3,})/i
+  );
 
   const danId = idMatch ? idMatch[1].trim() : null;
   const expirationRaw = expMatch ? expMatch[1].trim() : null;
@@ -237,21 +246,42 @@ function parseDanInfoFromText(text) {
   };
 }
 
-// Convert "MM/DD/YYYY" or "MM-DD-YYYY" to Date object (for Postgres DATE)
+// Convert "MM/DD/YYYY" | "MM-DD-YYYY" | "MM/YYYY" | "MM-YYYY" to ISO date
 function parseExpirationDate(expirationRaw) {
   if (!expirationRaw) return null;
-  const match = expirationRaw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-  if (!match) return null;
-  let [, mm, dd, yyyy] = match;
-  if (yyyy.length === 2) {
-    // assume 20xx
-    yyyy = '20' + yyyy;
+  expirationRaw = expirationRaw.trim();
+
+  // 1) Full date: MM/DD/YYYY or MM-DD-YYYY
+  let match = expirationRaw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (match) {
+    let [, mm, dd, yyyy] = match;
+    if (yyyy.length === 2) {
+      // assume 20xx
+      yyyy = '20' + yyyy;
+    }
+    const iso = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    return iso;
   }
-  const iso = `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
-  const d = new Date(iso);
-  if (isNaN(d)) return null;
-  return iso; // let pg parse ISO date
+
+  // 2) Month / Year only: MM/YYYY or MM-YYYY
+  match = expirationRaw.match(/^(\d{1,2})[\/\-](\d{2,4})$/);
+  if (match) {
+    let [, mm, yyyy] = match;
+    if (yyyy.length === 2) {
+      yyyy = '20' + yyyy;
+    }
+    // default day = 1
+    const iso = `${yyyy}-${mm.padStart(2, '0')}-01`;
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    return iso;
+  }
+
+  return null;
 }
+
 
 // High-level helper: given buffer + memberName → maybe DAN info to store
 async function extractDanInfoFromInsurance(buffer, memberName) {
@@ -1047,15 +1077,11 @@ app.post(
 
       const account = accountResult.rows[0];
 
-      // We also load the submission so we know the member_name for OCR name matching
+      // Load the submission so we can get the member name for OCR matching
       const subResult = await pool.query(
         'SELECT * FROM submissions WHERE id = $1',
         [account.submission_id]
       );
-
-      if (subResult.rows.length === 0) {
-        return res.send('No membership data found for this account.');
-      }
 
       const submission = subResult.rows[0];
 
@@ -1072,96 +1098,69 @@ app.post(
         return res.redirect('/member/profile');
       }
 
-      // 2) Build dynamic UPDATE based on which file(s) are present
+      // 2) Run OCR on insurance image (if present and is an image)
+      let danInfo = null;
+      if (
+        insuranceFile &&
+        insuranceFile.mimetype &&
+        insuranceFile.mimetype.startsWith('image/')
+      ) {
+        danInfo = await extractDanInfoFromInsurance(
+          insuranceFile.buffer,
+          submission?.member_name || account.email || ''
+        );
+      }
+
+      // 3) Build dynamic UPDATE based on which file(s) are present
       const sets = [];
       const values = [];
       let idx = 1;
 
-      // --- Certification file updates ---
       if (certFile) {
-        sets.push(`cert_file = $${idx}`);
+        sets.push(`cert_file = $${idx++}`);
         values.push(certFile.buffer);
-        idx++;
-
-        sets.push(`cert_file_name = $${idx}`);
-        values.push(certFile.originalname || null);
-        idx++;
-
-        sets.push(`cert_file_mime = $${idx}`);
-        values.push(certFile.mimetype || null);
-        idx++;
-
-        // Optionally reset verification flag when member uploads a new cert
-        sets.push(`certification_verified = FALSE`);
+        sets.push(`cert_file_name = $${idx++}`);
+        values.push(certFile.originalname);
+        sets.push(`cert_file_mime = $${idx++}`);
+        values.push(certFile.mimetype);
       }
-
-      // --- Insurance file updates (plus OCR) ---
-      let danInfo = null;
 
       if (insuranceFile) {
-        // Store the new file itself
-        sets.push(`insurance_file = $${idx}`);
+        sets.push(`insurance_file = $${idx++}`);
         values.push(insuranceFile.buffer);
-        idx++;
-
-        sets.push(`insurance_file_name = $${idx}`);
-        values.push(insuranceFile.originalname || null);
-        idx++;
-
-        sets.push(`insurance_file_mime = $${idx}`);
-        values.push(insuranceFile.mimetype || null);
-        idx++;
-
-        // Optionally reset verification flag when member uploads a new insurance
-        sets.push(`insurance_verified = FALSE`);
-
-        // Run OCR only if it's an image (same logic as /submit-membership)
-        if (
-          insuranceFile.mimetype &&
-          insuranceFile.mimetype.startsWith('image/')
-        ) {
-          danInfo = await extractDanInfoFromInsurance(
-            insuranceFile.buffer,
-            submission.member_name || submission.member_email || ''
-          );
-        }
-
-        // If OCR found DAN data, include them in the UPDATE
-        if (danInfo && danInfo.danId) {
-          sets.push(`dan_id = $${idx}`);
-          values.push(danInfo.danId);
-          idx++;
-        }
-
-        if (danInfo && danInfo.danExpirationDate) {
-          sets.push(`dan_expiration_date = $${idx}`);
-          values.push(danInfo.danExpirationDate);
-          idx++;
-        }
+        sets.push(`insurance_file_name = $${idx++}`);
+        values.push(insuranceFile.originalname);
+        sets.push(`insurance_file_mime = $${idx++}`);
+        values.push(insuranceFile.mimetype);
       }
 
-      // Safety check – though we already return if no files
-      if (sets.length === 0) {
+      // If OCR succeeded and name matched, update DAN fields too
+      if (danInfo) {
+        sets.push(`dan_id = $${idx++}`);
+        values.push(danInfo.danId || null);
+        sets.push(`dan_expiration_date = $${idx++}`);
+        values.push(danInfo.danExpirationDate || null);
+      }
+
+      if (!sets.length) {
         return res.redirect('/member/profile');
       }
 
-      // 3) Finalize UPDATE with WHERE clause
+      // Append WHERE id = $idx
+      values.push(account.submission_id);
+
       const sql = `
         UPDATE submissions
         SET ${sets.join(', ')}
         WHERE id = $${idx}
       `;
-      values.push(account.submission_id);
 
       await pool.query(sql, values);
 
-      // 4) Back to profile
       res.redirect('/member/profile');
     } catch (err) {
       console.error('Error updating member documents:', err);
-      res
-        .status(500)
-        .send('Error updating documents. Please try again later.');
+      res.status(500).send('Error updating documents.');
     }
   }
 );
