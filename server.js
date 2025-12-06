@@ -221,18 +221,22 @@ function parseDanInfoFromText(text) {
     return null;
   }
 
-  // Very generic guesses – you can tweak based on real cards
+  // DAN ID: e.g. "DAN ID# 3293419"
   const idMatch = text.match(
     /(?:DAN\s*ID|Member\s*(?:ID|No\.?|Number)|ID\s*#)\s*[:#]?\s*([A-Z0-9\-]+)/i
   );
 
-  // Allow MM/DD/YYYY, MM-DD-YYYY, or MM/YYYY, MM-YYYY
+  // Allow:
+  // - "VALID UNTIL May 31, 2026"
+  // - "Valid Thru 05/31/2026"
+  // - "Expires 05/2026"
   const expMatch = text.match(
-    /(?:Valid\s*Until|Valid\s*Thru|Expires(?:\s*On)?|Exp\.?\s*Date)\s*[:\s]*([0-9]{1,2}[\/\-][0-9]{1,2}(?:[\/\-][0-9]{2,4})?)/i
+    /(?:Valid\s*Until|Valid\s*Thru|Expires(?:\s*On)?|Exp\.?\s*Date)[^\n]*?\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|[A-Za-z]{3,9}\s+\d{4}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{1,2}[\/\-]\d{2,4})/i
   );
 
+  // Name line: e.g. "MEMBER Patricia Pinto Coelho Vello"
   const nameMatch = text.match(
-    /(?:Name|Member)\s*[:\-]\s*([A-Z ,.'-]{3,})/i
+    /(?:Name|Member)\s*[:\-]?\s*([A-Z ,.'-]{3,})/i
   );
 
   const danId = idMatch ? idMatch[1].trim() : null;
@@ -246,17 +250,17 @@ function parseDanInfoFromText(text) {
   };
 }
 
-// Convert "MM/DD/YYYY" | "MM-DD-YYYY" | "MM/YYYY" | "MM-YYYY" to ISO date
+
+// Convert various date formats to ISO "YYYY-MM-DD"
 function parseExpirationDate(expirationRaw) {
   if (!expirationRaw) return null;
   expirationRaw = expirationRaw.trim();
 
-  // 1) Full date: MM/DD/YYYY or MM-DD-YYYY
+  // 1) Full numeric date: MM/DD/YYYY or MM-DD-YYYY
   let match = expirationRaw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
   if (match) {
     let [, mm, dd, yyyy] = match;
     if (yyyy.length === 2) {
-      // assume 20xx
       yyyy = '20' + yyyy;
     }
     const iso = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
@@ -265,15 +269,36 @@ function parseExpirationDate(expirationRaw) {
     return iso;
   }
 
-  // 2) Month / Year only: MM/YYYY or MM-YYYY
+  // 2) Month / Year numeric: MM/YYYY or MM-YYYY
   match = expirationRaw.match(/^(\d{1,2})[\/\-](\d{2,4})$/);
   if (match) {
     let [, mm, yyyy] = match;
     if (yyyy.length === 2) {
       yyyy = '20' + yyyy;
     }
-    // default day = 1
     const iso = `${yyyy}-${mm.padStart(2, '0')}-01`;
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    return iso;
+  }
+
+  // 3) Month-name formats:
+  //    "May 31, 2026", "May 31 2026", "May 2026"
+  const monthNames = {
+    january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+    july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
+  };
+
+  match = expirationRaw.match(
+    /^([A-Za-z]+)\s+(\d{1,2})?,?\s*(\d{4})$/
+  );
+  if (match) {
+    let [, monthStr, dayStr, yearStr] = match;
+    const m = monthNames[monthStr.toLowerCase()];
+    if (!m) return null;
+    const yyyy = yearStr;
+    const dd = dayStr ? dayStr : '1'; // default to 1st if only month/year
+    const iso = `${yyyy}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
     const d = new Date(iso);
     if (isNaN(d)) return null;
     return iso;
@@ -296,24 +321,29 @@ async function extractDanInfoFromInsurance(buffer, memberName) {
     const normalizedCardName = normalizeName(parsed.cardName);
     const normalizedMemberName = normalizeName(memberName);
 
-    if (normalizedCardName && normalizedMemberName && normalizedCardName === normalizedMemberName) {
-      const expDate = parseExpirationDate(parsed.expirationRaw);
-      return {
-        danId: parsed.danId || null,
-        danExpirationDate: expDate // ISO string or null
-      };
-    } else {
+    // By default we allow storing; we only block if there IS a card name
+    // and it clearly does NOT match the member name.
+    if (normalizedCardName && normalizedMemberName &&
+        normalizedCardName !== normalizedMemberName) {
       console.log('OCR: Name mismatch, not storing DAN info:', {
         cardName: parsed.cardName,
         memberName
       });
       return null;
     }
+
+    const expDate = parseExpirationDate(parsed.expirationRaw);
+
+    return {
+      danId: parsed.danId || null,
+      danExpirationDate: expDate || null
+    };
   } catch (err) {
     console.error('Error during OCR / DAN parsing:', err);
     return null;
   }
 }
+
 
 
 // Build the filled-in contract text (replacing the ____ fields)
@@ -1664,7 +1694,8 @@ app.get('/admin', async (req, res) => {
             <td>${sub.cert_agency || ''}</td>
             <td>${sub.cert_level || ''}</td>
             <td>${sub.phones || ''}</td>
-            <td>${sub.danExpirationDate || 'N/A'}</td>
+            <td>${sub.dan_expiration_date || 'N/A'}</td>
+
             <!-- NEW: Insurance card thumbnail -->
             <td>
               ${
@@ -1796,7 +1827,7 @@ app.get('/admin', async (req, res) => {
                   <th>Cert Agency</th>
                   <th>Cert Level</th>
                   <th>Phones</th>
-                  <th> Inrurance exp</th>
+                  <th> Insurance Exp. date</th>
                   <th>Insurance Card</th>
                   <!-- NEW -->
                   <th>Insurance OK?</th>
