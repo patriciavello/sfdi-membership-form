@@ -491,8 +491,98 @@ function buildContractText(data) {
   `;
 }
 
-// Generate a PDF buffer from that text
-function generateContractPdf(data) {
+// --- PDF Helpers: cover page + agreement ---
+// Small helper so we don't print "undefined" in PDFs
+function v(val, fallback = '—') {
+  if (val === undefined || val === null) return fallback;
+  const s = String(val).trim();
+  return s === '' ? fallback : s;
+}
+
+function addCoverPage(doc, data) {
+  // Cover title
+  doc.fontSize(18).text('SFDI Membership Form Submission', { align: 'center' });
+  doc.moveDown(0.25);
+  doc.fontSize(11).fillColor('#444').text(`Submitted: ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}`, { align: 'center' });
+  doc.fillColor('#000');
+  doc.moveDown(1);
+
+  // Member summary (mirrors the fields in index.html)
+  doc.fontSize(13).text('Member / Application', { underline: true });
+  doc.moveDown(0.5);
+
+  const rows = [
+    ['Application Type', v(data.applicationType)],
+    ['Membership Type', v(data.membershipType)],
+    ['Payment Method', v(data.paymentMethod)],
+    ['Payment Amount (USD)', v(data.paymentAmount)],
+    ['Publish Contact to Members?', v(data.publishContact)],
+    ['Under 18?', v(data.under18)],
+    ['Family Admin Email', v(data.familyAdminEmail || data.familyAdminName)],
+
+    ['Name', v(data.name)],
+    ['Member Name (printed)', v(data.memberPrintName)],
+    ['Email', v(data.email)],
+    ['Phone(s)', v(data.phones)],
+    ['Date of Birth', formatDate(data.dob)],
+
+    ['Address (line 1)', v(data.address1)],
+    ['Address (line 2)', v(data.address2)],
+    ['City, State, Zip', v(data.cityStateZip)],
+
+    ['Certification Agency', v(data.certAgency)],
+    ['Certification Level', v(data.certLevel)],
+    ['Certification Card #', v(data.certCardNumber)],
+    ['Certification Date', formatDate(data.certDate)],
+
+    ['Insurance Carrier', v(data.insuranceCarrier)],
+    ['Insurance Type', v(data.insuranceType)],
+
+    ['Medical Problems (if any)', v(data.medicalProblems, '')],
+  ];
+
+  // Render as two-column text (simple + robust)
+  const leftX = doc.x;
+  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const col1 = Math.min(190, pageWidth * 0.35);
+  const col2 = pageWidth - col1 - 10;
+
+  doc.fontSize(10);
+  rows.forEach(([k, val]) => {
+    // If we're near the bottom, continue on a new page (still part of the "cover")
+    if (doc.y > doc.page.height - doc.page.margins.bottom - 40) {
+      doc.addPage();
+    }
+
+    const y = doc.y;
+    doc.font('Helvetica-Bold').text(String(k) + ':', leftX, y, { width: col1 });
+    doc.font('Helvetica').text(String(val), leftX + col1 + 10, y, { width: col2 });
+    doc.moveDown(0.4);
+  });
+
+  doc.moveDown(0.5);
+
+  // Signatures (if provided)
+  doc.fontSize(13).text('Signatures', { underline: true });
+  doc.moveDown(0.5);
+  doc.fontSize(10).font('Helvetica-Bold').text('Member Signature (typed):', { continued: true });
+  doc.font('Helvetica').text(' ' + v(data.memberSignature, ''));
+  doc.font('Helvetica-Bold').text('Signature Date:', { continued: true });
+  doc.font('Helvetica').text(' ' + formatDate(data.signatureDate));
+
+  if ((data.under18 || '').toLowerCase() === 'yes') {
+    doc.moveDown(0.5);
+    doc.font('Helvetica-Bold').text('Guardian Email:', { continued: true });
+    doc.font('Helvetica').text(' ' + v(data.guardianEmail, ''));
+    doc.font('Helvetica-Bold').text('Guardian Name (printed):', { continued: true });
+    doc.font('Helvetica').text(' ' + v(data.guardianPrintName, ''));
+    doc.font('Helvetica-Bold').text('Guardian Signature (typed):', { continued: true });
+    doc.font('Helvetica').text(' ' + v(data.guardianSignature, ''));
+  }
+}
+
+// Generate a PDF buffer. If includeCover=true, the first page is a "form copy" cover.
+function generateContractPdf(data, { includeCover = false } = {}) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50 });
     const chunks = [];
@@ -500,6 +590,11 @@ function generateContractPdf(data) {
     doc.on('data', chunk => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
+
+    if (includeCover) {
+      addCoverPage(doc, data);
+      doc.addPage();
+    }
 
     // Title
     doc.fontSize(16).text('SOUTH FLORIDA DIVERS, INC.', { align: 'center' });
@@ -515,13 +610,12 @@ function generateContractPdf(data) {
     doc.moveDown();
 
     // Full contract text
-    doc.fontSize(11).text(buildContractText(data), {
-      align: 'left'
-    });
+    doc.fontSize(11).text(buildContractText(data), { align: 'left' });
 
     doc.end();
   });
 }
+
 
 //Treasure route to update payment
 app.post('/treasurer/update-payment', async (req, res) => {
@@ -578,7 +672,8 @@ app.post('/submit-membership',
       }
   
       try {
-        const pdfBuffer = await generateContractPdf(data);
+        const pdfBufferClub = await generateContractPdf(data, { includeCover: true });
+        const pdfBufferMember = await generateContractPdf(data, { includeCover: false });
         const filenameSafeName = (data.memberPrintName || data.name || 'Member')
           .replace(/[^a-z0-9]/gi, '_');
   
@@ -605,7 +700,7 @@ app.post('/submit-membership',
         const attachmentsForClub = [
           {
             filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-            content: pdfBuffer
+            content: pdfBufferClub
           }
         ];
   
@@ -641,7 +736,7 @@ app.post('/submit-membership',
     attachments: [
       {
         filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-        content: pdfBuffer
+        content: pdfBufferMember
       }
     ]
   };
@@ -658,7 +753,7 @@ app.post('/submit-membership',
       attachments: [
         {
           filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-          content: pdfBuffer
+          content: pdfBufferMember
         }
       ]
     };
@@ -675,7 +770,7 @@ app.post('/submit-membership',
       attachments: [
         {
           filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-          content: pdfBuffer
+          content: pdfBufferMember
         }
       ]
     };
