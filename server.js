@@ -491,98 +491,10 @@ function buildContractText(data) {
   `;
 }
 
-// --- PDF Helpers: cover page + agreement ---
-// Small helper so we don't print "undefined" in PDFs
-function v(val, fallback = '—') {
-  if (val === undefined || val === null) return fallback;
-  const s = String(val).trim();
-  return s === '' ? fallback : s;
-}
+// Generate a PDF buffer from that text
+function generateContractPdf(data, options = {}) {
+  const { includeCover = false } = options;
 
-function addCoverPage(doc, data) {
-  // Cover title
-  doc.fontSize(18).text('SFDI Membership Form Submission', { align: 'center' });
-  doc.moveDown(0.25);
-  doc.fontSize(11).fillColor('#444').text(`Submitted: ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}`, { align: 'center' });
-  doc.fillColor('#000');
-  doc.moveDown(1);
-
-  // Member summary (mirrors the fields in index.html)
-  doc.fontSize(13).text('Member / Application', { underline: true });
-  doc.moveDown(0.5);
-
-  const rows = [
-    ['Application Type', v(data.applicationType)],
-    ['Membership Type', v(data.membershipType)],
-    ['Payment Method', v(data.paymentMethod)],
-    ['Payment Amount (USD)', v(data.paymentAmount)],
-    ['Publish Contact to Members?', v(data.publishContact)],
-    ['Under 18?', v(data.under18)],
-    ['Family Admin Email', v(data.familyAdminEmail || data.familyAdminName)],
-
-    ['Name', v(data.name)],
-    ['Member Name (printed)', v(data.memberPrintName)],
-    ['Email', v(data.email)],
-    ['Phone(s)', v(data.phones)],
-    ['Date of Birth', formatDate(data.dob)],
-
-    ['Address (line 1)', v(data.address1)],
-    ['Address (line 2)', v(data.address2)],
-    ['City, State, Zip', v(data.cityStateZip)],
-
-    ['Certification Agency', v(data.certAgency)],
-    ['Certification Level', v(data.certLevel)],
-    ['Certification Card #', v(data.certCardNumber)],
-    ['Certification Date', formatDate(data.certDate)],
-
-    ['Insurance Carrier', v(data.insuranceCarrier)],
-    ['Insurance Type', v(data.insuranceType)],
-
-    ['Medical Problems (if any)', v(data.medicalProblems, '')],
-  ];
-
-  // Render as two-column text (simple + robust)
-  const leftX = doc.x;
-  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const col1 = Math.min(190, pageWidth * 0.35);
-  const col2 = pageWidth - col1 - 10;
-
-  doc.fontSize(10);
-  rows.forEach(([k, val]) => {
-    // If we're near the bottom, continue on a new page (still part of the "cover")
-    if (doc.y > doc.page.height - doc.page.margins.bottom - 40) {
-      doc.addPage();
-    }
-
-    const y = doc.y;
-    doc.font('Helvetica-Bold').text(String(k) + ':', leftX, y, { width: col1 });
-    doc.font('Helvetica').text(String(val), leftX + col1 + 10, y, { width: col2 });
-    doc.moveDown(0.4);
-  });
-
-  doc.moveDown(0.5);
-
-  // Signatures (if provided)
-  doc.fontSize(13).text('Signatures', { underline: true });
-  doc.moveDown(0.5);
-  doc.fontSize(10).font('Helvetica-Bold').text('Member Signature (typed):', { continued: true });
-  doc.font('Helvetica').text(' ' + v(data.memberSignature, ''));
-  doc.font('Helvetica-Bold').text('Signature Date:', { continued: true });
-  doc.font('Helvetica').text(' ' + formatDate(data.signatureDate));
-
-  if ((data.under18 || '').toLowerCase() === 'yes') {
-    doc.moveDown(0.5);
-    doc.font('Helvetica-Bold').text('Guardian Email:', { continued: true });
-    doc.font('Helvetica').text(' ' + v(data.guardianEmail, ''));
-    doc.font('Helvetica-Bold').text('Guardian Name (printed):', { continued: true });
-    doc.font('Helvetica').text(' ' + v(data.guardianPrintName, ''));
-    doc.font('Helvetica-Bold').text('Guardian Signature (typed):', { continued: true });
-    doc.font('Helvetica').text(' ' + v(data.guardianSignature, ''));
-  }
-}
-
-// Generate a PDF buffer. If includeCover=true, the first page is a "form copy" cover.
-function generateContractPdf(data, { includeCover = false } = {}) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50 });
     const chunks = [];
@@ -591,25 +503,62 @@ function generateContractPdf(data, { includeCover = false } = {}) {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
+    // -------------------
+    // COVER PAGE (optional)
+    // -------------------
     if (includeCover) {
-      addCoverPage(doc, data);
+      const memberName = data.memberPrintName || data.name || 'N/A';
+
+      doc.fontSize(18).text('SFDI Membership Submission', { align: 'center' });
+      doc.moveDown(0.5);
+      doc.fontSize(12).text('Cover Page – Copy of the submitted form details', { align: 'center' });
+      doc.moveDown(1);
+
+      doc.fontSize(11);
+      doc.text(`Member Name: ${memberName}`);
+      doc.text(`Member Email: ${data.email || 'N/A'}`);
+      doc.text(`Phone(s): ${data.phones || 'N/A'}`);
+      doc.moveDown(0.8);
+
+      doc.text(`Membership Type: ${data.membershipType || 'N/A'}`);
+      doc.text(`Application Type: ${data.applicationType || 'N/A'}`);
+      doc.text(`Payment Method: ${data.paymentMethod || 'N/A'}`);
+      doc.text(`Payment Amount: ${data.paymentAmount || 'N/A'}`);
+      doc.moveDown(0.8);
+
+      doc.text(`Under 18: ${data.under18 || 'N/A'}`);
+      doc.text(`Parent/Guardian Email: ${data.guardianEmail || 'N/A'}`);
+      doc.text(`Family Admin Email: ${data.familyAdminEmail || 'N/A'}`);
+      doc.moveDown(0.8);
+
+      doc.text('Certification', { underline: true });
+      doc.text(`Agency: ${data.certAgency || 'N/A'}`);
+      doc.text(`Level: ${data.certLevel || 'N/A'}`);
+      doc.text(`Certification Number: ${data.certCardNumber || 'N/A'}`);
+      doc.moveDown(0.8);
+
+      doc.text('Insurance (DAN)', { underline: true });
+      doc.text(`DAN ID: ${data.danId || 'N/A'}`);
+      doc.text(`DAN Expiration Date: ${data.danExpirationDate || 'N/A'}`);
+
+      // Next page: agreement
       doc.addPage();
     }
 
-    // Title
+    // -------------------
+    // AGREEMENT (existing content)
+    // -------------------
     doc.fontSize(16).text('SOUTH FLORIDA DIVERS, INC.', { align: 'center' });
     doc.moveDown(0.5);
     doc.fontSize(14).text('Yearly Membership Agreement & Complete Liability Release', { align: 'center' });
     doc.moveDown();
 
-    // Basic info header
     doc.fontSize(11).text(`Member: ${data.memberPrintName || data.name || ''}`);
     doc.text(`Email: ${data.email || ''}`);
     doc.text(`Phone(s): ${data.phones || ''}`);
     doc.text(`DOB: ${formatDate(data.dob)}`);
     doc.moveDown();
 
-    // Full contract text
     doc.fontSize(11).text(buildContractText(data), { align: 'left' });
 
     doc.end();
@@ -700,7 +649,7 @@ app.post('/submit-membership',
         const attachmentsForClub = [
           {
             filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-            content: pdfBufferClub
+            content: pdfBufferMember
           }
         ];
   
@@ -1368,6 +1317,116 @@ app.post('/admin/update-flag', async (req, res) => {
     }
   });
   
+
+// Admin: resend stored files (regenerates the contract PDF with cover page from DB fields)
+app.post('/admin/resend-files', async (req, res) => {
+  const { id } = req.body;
+
+  if (!id) return res.status(400).json({ success: false, error: 'Missing id' });
+
+  try {
+    const result = await pool.query(
+      `SELECT
+        id,
+        member_name,
+        member_email,
+        membership_type,
+        application_type,
+        payment_method,
+        payment_amount,
+        under18,
+        guardian_email,
+        family_admin_email,
+        cert_agency,
+        cert_level,
+        cert_number,
+        phones,
+        cert_file,
+        cert_file_name,
+        cert_file_mime,
+        insurance_file,
+        insurance_file_name,
+        insurance_file_mime,
+        dan_id,
+        dan_expiration_date
+      FROM submissions
+      WHERE id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Submission not found' });
+    }
+
+    const sub = result.rows[0];
+
+    if (!sub.cert_file || !sub.insurance_file) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing stored certification and/or insurance file for this submission.'
+      });
+    }
+
+    // Recreate contract (with cover) using the DB fields we have
+    const dataForPdf = {
+      memberPrintName: sub.member_name,
+      email: sub.member_email,
+      phones: sub.phones,
+      membershipType: sub.membership_type,
+      applicationType: sub.application_type,
+      paymentMethod: sub.payment_method,
+      paymentAmount: sub.payment_amount ? String(sub.payment_amount) : '',
+      under18: sub.under18,
+      guardianEmail: sub.guardian_email,
+      familyAdminEmail: sub.family_admin_email,
+      certAgency: sub.cert_agency,
+      certLevel: sub.cert_level,
+      certCardNumber: sub.cert_number,
+      danId: sub.dan_id,
+      danExpirationDate: sub.dan_expiration_date ? String(sub.dan_expiration_date) : ''
+    };
+
+    const pdfBufferClub = await generateContractPdf(dataForPdf, { includeCover: true });
+    const filenameSafeName = (sub.member_name || 'Member').replace(/[^a-z0-9]/gi, '_');
+
+    const attachments = [
+      {
+        filename: `SFDI-Membership-${filenameSafeName}.pdf`,
+        content: pdfBufferClub,
+        contentType: 'application/pdf'
+      },
+      {
+        filename: sub.insurance_file_name || 'DiveInsurance',
+        content: sub.insurance_file,
+        contentType: sub.insurance_file_mime || 'application/octet-stream'
+      },
+      {
+        filename: sub.cert_file_name || 'DiveCertification',
+        content: sub.cert_file,
+        contentType: sub.cert_file_mime || 'application/octet-stream'
+      }
+    ];
+
+    await transporter.sendMail({
+      from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+      to: SFDI_EMAIL,
+      subject: `RESEND: Membership Files – ${sub.member_name || 'Member'} (Submission #${sub.id})`,
+      text:
+        `Resending stored membership files for:\n\n` +
+        `Member: ${sub.member_name || ''}\n` +
+        `Email: ${sub.member_email || ''}\n` +
+        `Submission ID: ${sub.id}\n\n` +
+        `Attached: Contract (with cover), Insurance, Certification.`,
+      attachments
+    });
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error resending files:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
 // Treasure DASHBOARD
 app.get('/treasurer', async (req, res) => {
     try {
@@ -1868,6 +1927,9 @@ app.get('/admin', async (req, res) => {
                 ${sub.certification_verified ? '✅ Yes' : '❌ No'}
               </button>
             </td>
+            <td>
+              <button class="status-btn" onclick="resendFiles(${sub.id})">📧 Resend</button>
+            </td>
           </tr>
         `;
   })
@@ -1965,6 +2027,7 @@ app.get('/admin', async (req, res) => {
                   <th>Insurance OK?</th>
                   <th>Payment Received?</th>
                   <th>Cert OK?</th>
+                  <th>Resend to Club</th>
                 </tr>
               </thead>
   
@@ -2001,7 +2064,33 @@ app.get('/admin', async (req, res) => {
                 alert('Network error updating status.');
               }
             }
-          </script>
+          
+            async function resendFiles(id) {
+              if (!confirm('Resend contract (with cover), insurance and certification to the club email(s)?')) return;
+
+              try {
+                const res = await fetch('/admin/resend-files', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ id })
+                });
+
+                const data = await res.json();
+
+                if (!res.ok || !data.success) {
+                  console.error('Resend failed:', data);
+                  alert('Resend failed: ' + (data.error || 'Unknown error'));
+                  return;
+                }
+
+                alert('Resent successfully!');
+              } catch (err) {
+                console.error('Resend error:', err);
+                alert('Resend error. Please try again.');
+              }
+            }
+
+</script>
         </body>
         </html>
       `);
