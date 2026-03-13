@@ -81,7 +81,6 @@ async function initDb() {
         cert_level TEXT,
         cert_number TEXT,
         phones TEXT,
-        dob DATE,
         cert_file BYTEA,
         cert_file_name TEXT,
         cert_file_mime TEXT,
@@ -96,10 +95,6 @@ async function initDb() {
         payment_received BOOLEAN DEFAULT FALSE
       )
     `);
-
-    // Ensure new columns exist (for existing databases)
-    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS dob DATE`);
-
     await pool.query(`
       CREATE TABLE IF NOT EXISTS member_accounts (
         id SERIAL PRIMARY KEY,
@@ -497,9 +492,7 @@ function buildContractText(data) {
 }
 
 // Generate a PDF buffer from that text
-function generateContractPdf(data, options = {}) {
-  const { includeCover = false } = options;
-
+function generateContractPdf(data) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50 });
     const chunks = [];
@@ -508,69 +501,27 @@ function generateContractPdf(data, options = {}) {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // -------------------
-    // COVER PAGE (optional)
-    // -------------------
-    if (includeCover) {
-      const memberName = data.memberPrintName || data.name || 'N/A';
-
-      doc.fontSize(18).text('SFDI Membership Submission', { align: 'center' });
-      doc.moveDown(0.5);
-      doc.fontSize(12).text('Cover Page – Copy of the submitted form details', { align: 'center' });
-      doc.moveDown(1);
-
-      doc.fontSize(11);
-      doc.text(`Member Name: ${memberName}`);
-      doc.text(`Member Email: ${data.email || 'N/A'}`);
-      doc.text(`Phone(s): ${data.phones || 'N/A'}`);
-      doc.text(`DOB: ${formatDate(data.dob)}`);
-      doc.moveDown(0.8);
-
-      doc.text(`Membership Type: ${data.membershipType || 'N/A'}`);
-      doc.text(`Application Type: ${data.applicationType || 'N/A'}`);
-      doc.text(`Payment Method: ${data.paymentMethod || 'N/A'}`);
-      doc.text(`Payment Amount: ${data.paymentAmount || 'N/A'}`);
-      doc.moveDown(0.8);
-
-      doc.text(`Under 18: ${data.under18 || 'N/A'}`);
-      doc.text(`Parent/Guardian Email: ${data.guardianEmail || 'N/A'}`);
-      doc.text(`Family Admin Email: ${data.familyAdminEmail || 'N/A'}`);
-      doc.moveDown(0.8);
-
-      doc.text('Certification', { underline: true });
-      doc.text(`Agency: ${data.certAgency || 'N/A'}`);
-      doc.text(`Level: ${data.certLevel || 'N/A'}`);
-      doc.text(`Certification Number: ${data.certCardNumber || 'N/A'}`);
-      doc.moveDown(0.8);
-
-      doc.text('Insurance (DAN)', { underline: true });
-      doc.text(`DAN ID: ${data.danId || 'N/A'}`);
-      doc.text(`DAN Expiration Date: ${data.danExpirationDate || 'N/A'}`);
-
-      // Next page: agreement
-      doc.addPage();
-    }
-
-    // -------------------
-    // AGREEMENT (existing content)
-    // -------------------
+    // Title
     doc.fontSize(16).text('SOUTH FLORIDA DIVERS, INC.', { align: 'center' });
     doc.moveDown(0.5);
     doc.fontSize(14).text('Yearly Membership Agreement & Complete Liability Release', { align: 'center' });
     doc.moveDown();
 
+    // Basic info header
     doc.fontSize(11).text(`Member: ${data.memberPrintName || data.name || ''}`);
     doc.text(`Email: ${data.email || ''}`);
     doc.text(`Phone(s): ${data.phones || ''}`);
     doc.text(`DOB: ${formatDate(data.dob)}`);
     doc.moveDown();
 
-    doc.fontSize(11).text(buildContractText(data), { align: 'left' });
+    // Full contract text
+    doc.fontSize(11).text(buildContractText(data), {
+      align: 'left'
+    });
 
     doc.end();
   });
 }
-
 
 //Treasure route to update payment
 app.post('/treasurer/update-payment', async (req, res) => {
@@ -627,8 +578,7 @@ app.post('/submit-membership',
       }
   
       try {
-        const pdfBufferClub = await generateContractPdf(data, { includeCover: true });
-        const pdfBufferMember = await generateContractPdf(data, { includeCover: false });
+        const pdfBuffer = await generateContractPdf(data);
         const filenameSafeName = (data.memberPrintName || data.name || 'Member')
           .replace(/[^a-z0-9]/gi, '_');
   
@@ -655,7 +605,7 @@ app.post('/submit-membership',
         const attachmentsForClub = [
           {
             filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-            content: pdfBufferClub
+            content: pdfBuffer
           }
         ];
   
@@ -691,7 +641,7 @@ app.post('/submit-membership',
     attachments: [
       {
         filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-        content: pdfBufferMember
+        content: pdfBuffer
       }
     ]
   };
@@ -708,7 +658,7 @@ app.post('/submit-membership',
       attachments: [
         {
           filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-          content: pdfBufferMember
+          content: pdfBuffer
         }
       ]
     };
@@ -724,8 +674,8 @@ app.post('/submit-membership',
   A copy of the SFDI Yearly Membership Agreement & Complete Liability Release is attached as a PDF for your records.`,
       attachments: [
         {
-          filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-          content: pdfBufferMember
+          filename: `SFDI-Membership-${filenameSafeNam`,e}.pdf
+          content: pdfBuffer
         }
       ]
     };
@@ -760,7 +710,6 @@ app.post('/submit-membership',
           cert_level,
           cert_number,
           phones,
-          dob,
           cert_file,
           cert_file_name,
           cert_file_mime,
@@ -770,10 +719,8 @@ app.post('/submit-membership',
           dan_id,
           dan_expiration_date
         )
-        VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-          $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
-        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+          $17, $18, $19, $20, $21)
       `,
       [
         data.memberPrintName || data.name || '',
@@ -789,22 +736,20 @@ app.post('/submit-membership',
         data.certLevel || '',
         data.certCardNumber || '',
         data.phones || '',
-        data.dob || null,
         certFile ? certFile.buffer : null,
         certFile ? certFile.originalname : null,
         certFile ? certFile.mimetype : null,
         insuranceFile ? insuranceFile.buffer : null,
         insuranceFile ? insuranceFile.originalname : null,
         insuranceFile ? insuranceFile.mimetype : null,
+        // DAN OCR
         danInfo ? danInfo.danId : null,
         danInfo ? danInfo.danExpirationDate : null
       ]
     );
   } catch (dbErr) {
     console.error('Error saving submission to DB:', dbErr);
-    return res.status(500).json({
-      error: 'Form email was sent, but saving to the database failed.'
-    });
+    // you *could* choose to still respond 200 here, since emails were sent
   }
 
   res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });
@@ -1328,118 +1273,6 @@ app.post('/admin/update-flag', async (req, res) => {
     }
   });
   
-
-// Admin: resend stored files (regenerates the contract PDF with cover page from DB fields)
-app.post('/admin/resend-files', async (req, res) => {
-  const { id } = req.body;
-
-  if (!id) return res.status(400).json({ success: false, error: 'Missing id' });
-
-  try {
-    const result = await pool.query(
-      `SELECT
-        id,
-        member_name,
-        member_email,
-        membership_type,
-        application_type,
-        payment_method,
-        payment_amount,
-        under18,
-        guardian_email,
-        family_admin_email,
-        cert_agency,
-        cert_level,
-        cert_number,
-        phones,
-        dob,
-        cert_file,
-        cert_file_name,
-        cert_file_mime,
-        insurance_file,
-        insurance_file_name,
-        insurance_file_mime,
-        dan_id,
-        dan_expiration_date
-      FROM submissions
-      WHERE id = $1`,
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Submission not found' });
-    }
-
-    const sub = result.rows[0];
-
-    if (!sub.cert_file || !sub.insurance_file) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing stored certification and/or insurance file for this submission.'
-      });
-    }
-
-    // Recreate contract (with cover) using the DB fields we have
-    const dataForPdf = {
-      memberPrintName: sub.member_name,
-      email: sub.member_email,
-      phones: sub.phones,
-      dob: sub.dob ? String(sub.dob) : '',
-      membershipType: sub.membership_type,
-      applicationType: sub.application_type,
-      paymentMethod: sub.payment_method,
-      paymentAmount: sub.payment_amount ? String(sub.payment_amount) : '',
-      under18: sub.under18,
-      guardianEmail: sub.guardian_email,
-      familyAdminEmail: sub.family_admin_email,
-      certAgency: sub.cert_agency,
-      certLevel: sub.cert_level,
-      certCardNumber: sub.cert_number,
-      danId: sub.dan_id,
-      danExpirationDate: sub.dan_expiration_date ? String(sub.dan_expiration_date) : ''
-    };
-
-    const pdfBufferClub = await generateContractPdf(dataForPdf, { includeCover: true });
-    const filenameSafeName = (sub.member_name || 'Member').replace(/[^a-z0-9]/gi, '_');
-
-    const attachments = [
-      {
-        filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-        content: pdfBufferClub,
-        contentType: 'application/pdf'
-      },
-      {
-        filename: sub.insurance_file_name || 'DiveInsurance',
-        content: sub.insurance_file,
-        contentType: sub.insurance_file_mime || 'application/octet-stream'
-      },
-      {
-        filename: sub.cert_file_name || 'DiveCertification',
-        content: sub.cert_file,
-        contentType: sub.cert_file_mime || 'application/octet-stream'
-      }
-    ];
-
-    await transporter.sendMail({
-      from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
-      to: SFDI_EMAIL,
-      subject: `RESEND: Membership Files – ${sub.member_name || 'Member'} (Submission #${sub.id})`,
-      text:
-        `Resending stored membership files for:\n\n` +
-        `Member: ${sub.member_name || ''}\n` +
-        `Email: ${sub.member_email || ''}\n` +
-        `Submission ID: ${sub.id}\n\n` +
-        `Attached: Contract (with cover), Insurance, Certification.`,
-      attachments
-    });
-
-    return res.json({ success: true });
-  } catch (err) {
-    console.error('Error resending files:', err);
-    return res.status(500).json({ success: false, error: 'Server error' });
-  }
-});
-
 // Treasure DASHBOARD
 app.get('/treasurer', async (req, res) => {
     try {
@@ -1940,9 +1773,6 @@ app.get('/admin', async (req, res) => {
                 ${sub.certification_verified ? '✅ Yes' : '❌ No'}
               </button>
             </td>
-            <td>
-              <button class="status-btn" onclick="resendFiles(${sub.id})">📧 Resend</button>
-            </td>
           </tr>
         `;
   })
@@ -2040,7 +1870,6 @@ app.get('/admin', async (req, res) => {
                   <th>Insurance OK?</th>
                   <th>Payment Received?</th>
                   <th>Cert OK?</th>
-                  <th>Resend to Club</th>
                 </tr>
               </thead>
   
@@ -2077,33 +1906,7 @@ app.get('/admin', async (req, res) => {
                 alert('Network error updating status.');
               }
             }
-          
-            async function resendFiles(id) {
-              if (!confirm('Resend contract (with cover), insurance and certification to the club email(s)?')) return;
-
-              try {
-                const res = await fetch('/admin/resend-files', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ id })
-                });
-
-                const data = await res.json();
-
-                if (!res.ok || !data.success) {
-                  console.error('Resend failed:', data);
-                  alert('Resend failed: ' + (data.error || 'Unknown error'));
-                  return;
-                }
-
-                alert('Resent successfully!');
-              } catch (err) {
-                console.error('Resend error:', err);
-                alert('Resend error. Please try again.');
-              }
-            }
-
-</script>
+          </script>
         </body>
         </html>
       `);

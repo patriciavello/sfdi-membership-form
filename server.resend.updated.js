@@ -81,7 +81,6 @@ async function initDb() {
         cert_level TEXT,
         cert_number TEXT,
         phones TEXT,
-        dob DATE,
         cert_file BYTEA,
         cert_file_name TEXT,
         cert_file_mime TEXT,
@@ -96,10 +95,6 @@ async function initDb() {
         payment_received BOOLEAN DEFAULT FALSE
       )
     `);
-
-    // Ensure new columns exist (for existing databases)
-    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS dob DATE`);
-
     await pool.query(`
       CREATE TABLE IF NOT EXISTS member_accounts (
         id SERIAL PRIMARY KEY,
@@ -523,7 +518,6 @@ function generateContractPdf(data, options = {}) {
       doc.text(`Member Name: ${memberName}`);
       doc.text(`Member Email: ${data.email || 'N/A'}`);
       doc.text(`Phone(s): ${data.phones || 'N/A'}`);
-      doc.text(`DOB: ${formatDate(data.dob)}`);
       doc.moveDown(0.8);
 
       doc.text(`Membership Type: ${data.membershipType || 'N/A'}`);
@@ -655,7 +649,7 @@ app.post('/submit-membership',
         const attachmentsForClub = [
           {
             filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-            content: pdfBufferClub
+            content: pdfBufferMember
           }
         ];
   
@@ -760,7 +754,6 @@ app.post('/submit-membership',
           cert_level,
           cert_number,
           phones,
-          dob,
           cert_file,
           cert_file_name,
           cert_file_mime,
@@ -770,10 +763,8 @@ app.post('/submit-membership',
           dan_id,
           dan_expiration_date
         )
-        VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-          $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
-        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+          $17, $18, $19, $20, $21)
       `,
       [
         data.memberPrintName || data.name || '',
@@ -789,22 +780,20 @@ app.post('/submit-membership',
         data.certLevel || '',
         data.certCardNumber || '',
         data.phones || '',
-        data.dob || null,
         certFile ? certFile.buffer : null,
         certFile ? certFile.originalname : null,
         certFile ? certFile.mimetype : null,
         insuranceFile ? insuranceFile.buffer : null,
         insuranceFile ? insuranceFile.originalname : null,
         insuranceFile ? insuranceFile.mimetype : null,
+        // DAN OCR
         danInfo ? danInfo.danId : null,
         danInfo ? danInfo.danExpirationDate : null
       ]
     );
   } catch (dbErr) {
     console.error('Error saving submission to DB:', dbErr);
-    return res.status(500).json({
-      error: 'Form email was sent, but saving to the database failed.'
-    });
+    // you *could* choose to still respond 200 here, since emails were sent
   }
 
   res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });
@@ -1352,7 +1341,6 @@ app.post('/admin/resend-files', async (req, res) => {
         cert_level,
         cert_number,
         phones,
-        dob,
         cert_file,
         cert_file_name,
         cert_file_mime,
@@ -1384,7 +1372,6 @@ app.post('/admin/resend-files', async (req, res) => {
       memberPrintName: sub.member_name,
       email: sub.member_email,
       phones: sub.phones,
-      dob: sub.dob ? String(sub.dob) : '',
       membershipType: sub.membership_type,
       applicationType: sub.application_type,
       paymentMethod: sub.payment_method,

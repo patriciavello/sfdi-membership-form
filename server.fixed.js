@@ -770,10 +770,8 @@ app.post('/submit-membership',
           dan_id,
           dan_expiration_date
         )
-        VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-          $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
-        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+          $17, $18, $19, $21, $22)
       `,
       [
         data.memberPrintName || data.name || '',
@@ -796,15 +794,14 @@ app.post('/submit-membership',
         insuranceFile ? insuranceFile.buffer : null,
         insuranceFile ? insuranceFile.originalname : null,
         insuranceFile ? insuranceFile.mimetype : null,
+        // DAN OCR
         danInfo ? danInfo.danId : null,
         danInfo ? danInfo.danExpirationDate : null
       ]
     );
   } catch (dbErr) {
     console.error('Error saving submission to DB:', dbErr);
-    return res.status(500).json({
-      error: 'Form email was sent, but saving to the database failed.'
-    });
+    // you *could* choose to still respond 200 here, since emails were sent
   }
 
   res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });
