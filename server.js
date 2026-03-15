@@ -751,11 +751,18 @@ app.post('/submit-membership',
       });
     }
 
-    if (data.agreeLiability !== 'on') {
-      return res.status(400).json({
-        error: 'You must agree to the liability release before submitting.'
-      });
-    }
+    const agreed =
+    data.agreeLiability === 'on' ||
+    data.agreeLiability === 'true' ||
+    data.agreeLiability === 'yes' ||
+    data.agreeLiability === '1' ||
+    data.agreeLiability === true;
+  
+  if (!agreed) {
+    return res.status(400).json({
+      error: 'You must agree to the liability release before submitting.'
+    });
+  }
 
     let danInfo = null;
     try {
