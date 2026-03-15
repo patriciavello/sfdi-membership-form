@@ -4,6 +4,7 @@ a<!DOCTYPE html>
   <meta charset="UTF-8" />
   <title>South Florida Divers – Membership Agreement</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -403,8 +404,8 @@ COMPLETE BAR TO LITIGATION.
       </div>
 
       <label>
-        <input type="checkbox" name="agreeLiability" required>
-        I have read and agree to the Yearly Membership Agreement & Complete Liability Release.
+        <input type="checkbox" name="intentConfirm" required>
+        I have read and agree to the Yearly Membership Agreement & Complete Liability Release. By checking this box and typing my full legal name below, I confirm that I am electronically signing this membership agreement and intend to be legally bound by its terms.
       </label>
     </fieldset>
 
@@ -418,10 +419,12 @@ COMPLETE BAR TO LITIGATION.
       </label>
 
       <label>
-        Member Signature (type your full legal name):
+        Electronic Signature — type your full legal name exactly as your signature:
         <input type="text" name="memberSignature" required>
       </label>
-
+      <p class="small-text">
+        Your typed name, together with your agreement checkbox, date/time, and submission record, will be treated as your electronic signature.
+      </p>
       <label>
         Date:
         <input type="date" name="signatureDate" required>
@@ -466,28 +469,77 @@ COMPLETE BAR TO LITIGATION.
       
     <div id="formMessage" class="message" style="display:none;"></div>
   </form>
-
+  <script>
+    function waitForImagesToLoad(container) {
+      const images = Array.from(container.querySelectorAll('img'));
+      return Promise.all(
+        images.map(img => {
+          if (img.complete) return Promise.resolve();
+          return new Promise(resolve => {
+            img.onload = resolve;
+            img.onerror = resolve;
+          });
+        })
+      );
+    }
+  
+    async function canvasToBlob(canvas) {
+      return new Promise(resolve => {
+        canvas.toBlob(resolve, 'image/png');
+      });
+    }
+  
+    async function captureFormAsImages(formEl) {
+      await waitForImagesToLoad(formEl);
+  
+      const originalMaxHeight = formEl.style.maxHeight;
+      const originalOverflow = formEl.style.overflow;
+  
+      formEl.style.maxHeight = 'none';
+      formEl.style.overflow = 'visible';
+  
+      const pageHeight = 1400; // pixels per screenshot chunk
+      const totalHeight = formEl.scrollHeight;
+      const images = [];
+  
+      for (let y = 0; y < totalHeight; y += pageHeight) {
+        const canvas = await html2canvas(formEl, {
+          backgroundColor: '#ffffff',
+          scale: 2,
+          useCORS: true,
+          scrollY: -window.scrollY,
+          windowWidth: document.documentElement.scrollWidth,
+          windowHeight: Math.min(pageHeight, totalHeight - y),
+          y
+        });
+  
+        const blob = await canvasToBlob(canvas);
+        if (blob) images.push(blob);
+      }
+  
+      formEl.style.maxHeight = originalMaxHeight;
+      formEl.style.overflow = originalOverflow;
+  
+      return images;
+    }
+  </script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      // --- Elements ---
       const membershipForm = document.getElementById('membershipForm');
       const submitBtn = document.getElementById('submitBtn');
       const formMessage = document.getElementById('formMessage');
-  
-      // Under 18 / guardian fields
+    
       const under18Radios = document.querySelectorAll('input[name="under18"]');
       const guardianSection = document.getElementById('guardianSection');
       const guardianEmailInput = document.querySelector('[name="guardianEmail"]');
       const guardianPrintNameInput = document.querySelector('[name="guardianPrintName"]');
       const guardianSignatureInput = document.querySelector('[name="guardianSignature"]');
-  
-      // Membership type / payment / family admin email
+    
       const membershipTypeRadios = document.querySelectorAll('input[name="membershipType"]');
       const paymentAmountInput = document.querySelector('input[name="paymentAmount"]');
       const familyAdminSection = document.getElementById('familyAdminSection');
       const familyAdminEmailInput = document.querySelector('[name="familyAdminEmail"]');
-  
-      // --- Helper: show/hide guardian section ---
+    
       function updateGuardianSection(value) {
         if (value === 'Yes') {
           guardianSection.style.display = 'block';
@@ -502,12 +554,11 @@ COMPLETE BAR TO LITIGATION.
           if (guardianSignatureInput) guardianSignatureInput.value = '';
         }
       }
-  
-      // --- Helper: show/hide family admin email section ---
+    
       function updateFamilyAdminVisibility() {
         const selectedType = Array.from(membershipTypeRadios).find(r => r.checked)?.value;
         const amount = parseFloat(paymentAmountInput.value || '0');
-  
+    
         if (selectedType === 'FAMILY' && amount === 0) {
           familyAdminSection.style.display = 'block';
           if (familyAdminEmailInput) familyAdminEmailInput.required = true;
@@ -519,56 +570,54 @@ COMPLETE BAR TO LITIGATION.
           }
         }
       }
-  
-      // --- Wire up under-18 radios ---
+    
       under18Radios.forEach(radio => {
         radio.addEventListener('change', function () {
           updateGuardianSection(this.value);
         });
       });
-  
-      // Initialize guardian state based on default radio selection
+    
       const initiallyCheckedUnder18 = Array.from(under18Radios).find(r => r.checked);
       if (initiallyCheckedUnder18) {
         updateGuardianSection(initiallyCheckedUnder18.value);
       } else {
         updateGuardianSection('No');
       }
-  
-      // --- Wire up membership type + payment amount ---
+    
       membershipTypeRadios.forEach(radio => {
         radio.addEventListener('change', updateFamilyAdminVisibility);
       });
-  
+    
       if (paymentAmountInput) {
         paymentAmountInput.addEventListener('input', updateFamilyAdminVisibility);
       }
-  
-      // Initialize family admin visibility on load
+    
       updateFamilyAdminVisibility();
-  
-      // --- Handle form submit via fetch to backend (with files) ---
+    
       membershipForm.addEventListener('submit', async function (e) {
         e.preventDefault();
         submitBtn.disabled = true;
         formMessage.style.display = 'none';
-  
-        const formData = new FormData(membershipForm);
-  
+    
         try {
+          const formImages = await captureFormAsImages(membershipForm);
+          const formData = new FormData(membershipForm);
+    
+          formImages.forEach((blob, index) => {
+            formData.append('formScreenshots', blob, `form-page-${index + 1}.png`);
+          });
+    
           const response = await fetch('/submit-membership', {
             method: 'POST',
-            body: formData // FormData includes file uploads
+            body: formData
           });
-  
+    
           const result = await response.json();
-  
+    
           formMessage.style.display = 'block';
           if (response.ok) {
             formMessage.className = 'message success';
             formMessage.textContent = result.message || 'Form submitted successfully. Please check your email.';
-  
-            // Reset form and sections
             membershipForm.reset();
             updateGuardianSection('No');
             updateFamilyAdminVisibility();
@@ -586,7 +635,7 @@ COMPLETE BAR TO LITIGATION.
         }
       });
     });
-  </script>
+    </script>
   
 </body>
 </html>

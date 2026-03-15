@@ -64,32 +64,63 @@ transporter.verify((error, success) => {
 
 async function initDb() {
   try {
+    // Main submissions table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS submissions (
         id SERIAL PRIMARY KEY,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
         member_name TEXT,
         member_email TEXT,
         membership_type TEXT,
         application_type TEXT,
         payment_method TEXT,
         payment_amount NUMERIC(10,2),
+
+        address1 TEXT,
+        address2 TEXT,
+        city_state_zip TEXT,
+        publish_contact TEXT,
+
         under18 TEXT,
         guardian_email TEXT,
+        guardian_print_name TEXT,
+        guardian_signature TEXT,
+
         family_admin_email TEXT,
+
         cert_agency TEXT,
         cert_level TEXT,
         cert_number TEXT,
+        cert_date DATE,
+        medical_problems TEXT,
+
+        insurance_carrier TEXT,
+        insurance_type TEXT,
+
         phones TEXT,
         dob DATE,
+
+        agree_liability BOOLEAN,
+        member_signature TEXT,
+        signature_date DATE,
+
         cert_file BYTEA,
         cert_file_name TEXT,
         cert_file_mime TEXT,
+
         insurance_file BYTEA,
         insurance_file_name TEXT,
         insurance_file_mime TEXT,
+
         dan_id TEXT,
         dan_expiration_date DATE,
+
+        submission_ip TEXT,
+        user_agent TEXT,
+        agreement_version TEXT,
+        legal_text_snapshot TEXT,
+        signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
         insurance_verified BOOLEAN DEFAULT FALSE,
         certification_verified BOOLEAN DEFAULT FALSE,
@@ -97,9 +128,76 @@ async function initDb() {
       )
     `);
 
-    // Ensure new columns exist (for existing databases)
+    // Screenshots of the submitted form
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS submission_form_screenshots (
+        id SERIAL PRIMARY KEY,
+        submission_id INT NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+        image_data BYTEA NOT NULL,
+        file_name TEXT,
+        mime_type TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    // Backfill columns for older databases
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS member_name TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS member_email TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS membership_type TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS application_type TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS payment_method TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS payment_amount NUMERIC(10,2)`);
+
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS address1 TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS address2 TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS city_state_zip TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS publish_contact TEXT`);
+
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS under18 TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS guardian_email TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS guardian_print_name TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS guardian_signature TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS family_admin_email TEXT`);
+
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS cert_agency TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS cert_level TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS cert_number TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS cert_date DATE`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS medical_problems TEXT`);
+
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS insurance_carrier TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS insurance_type TEXT`);
+
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS phones TEXT`);
     await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS dob DATE`);
 
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS agree_liability BOOLEAN`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS member_signature TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS signature_date DATE`);
+
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS cert_file BYTEA`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS cert_file_name TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS cert_file_mime TEXT`);
+
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS insurance_file BYTEA`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS insurance_file_name TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS insurance_file_mime TEXT`);
+
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS dan_id TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS dan_expiration_date DATE`);
+
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS submission_ip TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS user_agent TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS agreement_version TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS legal_text_snapshot TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS insurance_verified BOOLEAN DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS certification_verified BOOLEAN DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS payment_received BOOLEAN DEFAULT FALSE`);
+
+    // Member login tables
     await pool.query(`
       CREATE TABLE IF NOT EXISTS member_accounts (
         id SERIAL PRIMARY KEY,
@@ -110,6 +208,7 @@ async function initDb() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS member_password_tokens (
         email TEXT PRIMARY KEY,
@@ -119,9 +218,7 @@ async function initDb() {
       )
     `);
 
-    console.log('PostgreSQL: submissions, member_accounts, member_password_tokens tables are ready');
-
-
+    console.log('PostgreSQL: submissions, submission_form_screenshots, member_accounts, member_password_tokens tables are ready');
   } catch (err) {
     console.error('Error initializing database:', err);
   }
@@ -379,7 +476,31 @@ async function extractDanInfoFromInsurance(buffer, memberName) {
   }
 }
 
+async function addScreenshotPages(doc, screenshots) {
+  for (const shot of screenshots) {
+    try {
+      doc.addPage();
 
+      doc.fontSize(14).text('Submitted Online Form Snapshot', { align: 'center' });
+      doc.moveDown(0.5);
+
+      const pageWidth = doc.page.width;
+      const pageHeight = doc.page.height;
+      const margin = 40;
+
+      const maxWidth = pageWidth - margin * 2;
+      const maxHeight = pageHeight - 120;
+
+      doc.image(shot.buffer, margin, 80, {
+        fit: [maxWidth, maxHeight],
+        align: 'center',
+        valign: 'top'
+      });
+    } catch (err) {
+      console.error('Error adding screenshot to PDF:', err);
+    }
+  }
+}
 
 
 // Build the filled-in contract text (replacing the ____ fields)
@@ -498,76 +619,72 @@ function buildContractText(data) {
 
 // Generate a PDF buffer from that text
 function generateContractPdf(data, options = {}) {
-  const { includeCover = false } = options;
+  const { includeCover = false, formScreenshots = [] } = options;
 
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50 });
-    const chunks = [];
+  return new Promise(async (resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 50 });
+      const chunks = [];
 
-    doc.on('data', chunk => chunks.push(chunk));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
 
-    // -------------------
-    // COVER PAGE (optional)
-    // -------------------
-    if (includeCover) {
-      const memberName = data.memberPrintName || data.name || 'N/A';
+      if (includeCover) {
+        const memberName = data.memberPrintName || data.name || 'N/A';
 
-      doc.fontSize(18).text('SFDI Membership Submission', { align: 'center' });
+        doc.fontSize(18).text('SFDI Membership Submission', { align: 'center' });
+        doc.moveDown(0.5);
+        doc.fontSize(12).text('Cover Page – Copy of the submitted form details', { align: 'center' });
+        doc.moveDown(1);
+
+        doc.fontSize(11);
+        doc.text(`Member Name: ${memberName}`);
+        doc.text(`Member Email: ${data.email || 'N/A'}`);
+        doc.text(`Phone(s): ${data.phones || 'N/A'}`);
+        doc.text(`DOB: ${formatDate(data.dob)}`);
+        doc.moveDown(0.8);
+
+        doc.text(`Membership Type: ${data.membershipType || 'N/A'}`);
+        doc.text(`Application Type: ${data.applicationType || 'N/A'}`);
+        doc.text(`Payment Method: ${data.paymentMethod || 'N/A'}`);
+        doc.text(`Payment Amount: ${data.paymentAmount || 'N/A'}`);
+        doc.moveDown(0.8);
+
+        doc.text(`Under 18: ${data.under18 || 'N/A'}`);
+        doc.text(`Parent/Guardian Email: ${data.guardianEmail || 'N/A'}`);
+        doc.text(`Family Admin Email: ${data.familyAdminEmail || 'N/A'}`);
+        doc.moveDown(0.8);
+
+        doc.text('Certification', { underline: true });
+        doc.text(`Agency: ${data.certAgency || 'N/A'}`);
+        doc.text(`Level: ${data.certLevel || 'N/A'}`);
+        doc.text(`Certification Number: ${data.certCardNumber || 'N/A'}`);
+
+        doc.addPage();
+      }
+
+      doc.fontSize(16).text('SOUTH FLORIDA DIVERS, INC.', { align: 'center' });
       doc.moveDown(0.5);
-      doc.fontSize(12).text('Cover Page – Copy of the submitted form details', { align: 'center' });
-      doc.moveDown(1);
+      doc.fontSize(14).text('Yearly Membership Agreement & Complete Liability Release', { align: 'center' });
+      doc.moveDown();
 
-      doc.fontSize(11);
-      doc.text(`Member Name: ${memberName}`);
-      doc.text(`Member Email: ${data.email || 'N/A'}`);
-      doc.text(`Phone(s): ${data.phones || 'N/A'}`);
+      doc.fontSize(11).text(`Member: ${data.memberPrintName || data.name || ''}`);
+      doc.text(`Email: ${data.email || ''}`);
+      doc.text(`Phone(s): ${data.phones || ''}`);
       doc.text(`DOB: ${formatDate(data.dob)}`);
-      doc.moveDown(0.8);
+      doc.moveDown();
 
-      doc.text(`Membership Type: ${data.membershipType || 'N/A'}`);
-      doc.text(`Application Type: ${data.applicationType || 'N/A'}`);
-      doc.text(`Payment Method: ${data.paymentMethod || 'N/A'}`);
-      doc.text(`Payment Amount: ${data.paymentAmount || 'N/A'}`);
-      doc.moveDown(0.8);
+      doc.fontSize(11).text(buildContractText(data), { align: 'left' });
 
-      doc.text(`Under 18: ${data.under18 || 'N/A'}`);
-      doc.text(`Parent/Guardian Email: ${data.guardianEmail || 'N/A'}`);
-      doc.text(`Family Admin Email: ${data.familyAdminEmail || 'N/A'}`);
-      doc.moveDown(0.8);
+      if (formScreenshots.length) {
+        await addScreenshotPages(doc, formScreenshots);
+      }
 
-      doc.text('Certification', { underline: true });
-      doc.text(`Agency: ${data.certAgency || 'N/A'}`);
-      doc.text(`Level: ${data.certLevel || 'N/A'}`);
-      doc.text(`Certification Number: ${data.certCardNumber || 'N/A'}`);
-      doc.moveDown(0.8);
-
-      doc.text('Insurance (DAN)', { underline: true });
-      doc.text(`DAN ID: ${data.danId || 'N/A'}`);
-      doc.text(`DAN Expiration Date: ${data.danExpirationDate || 'N/A'}`);
-
-      // Next page: agreement
-      doc.addPage();
+      doc.end();
+    } catch (err) {
+      reject(err);
     }
-
-    // -------------------
-    // AGREEMENT (existing content)
-    // -------------------
-    doc.fontSize(16).text('SOUTH FLORIDA DIVERS, INC.', { align: 'center' });
-    doc.moveDown(0.5);
-    doc.fontSize(14).text('Yearly Membership Agreement & Complete Liability Release', { align: 'center' });
-    doc.moveDown();
-
-    doc.fontSize(11).text(`Member: ${data.memberPrintName || data.name || ''}`);
-    doc.text(`Email: ${data.email || ''}`);
-    doc.text(`Phone(s): ${data.phones || ''}`);
-    doc.text(`DOB: ${formatDate(data.dob)}`);
-    doc.moveDown();
-
-    doc.fontSize(11).text(buildContractText(data), { align: 'left' });
-
-    doc.end();
   });
 }
 
@@ -603,149 +720,82 @@ app.post('/treasurer/update-payment', async (req, res) => {
 
 // Route to handle form submission WITH FILES
 app.post('/submit-membership',
-    upload.fields([
-      { name: 'certFile', maxCount: 1 },
-      { name: 'insuranceFile', maxCount: 1 }
-    ]),
-    async (req, res) => {
-      const data = req.body; // text fields
-      const files = req.files || {};
-      const certFile = files.certFile && files.certFile[0] ? files.certFile[0] : null;
-      const insuranceFile = files.insuranceFile && files.insuranceFile[0] ? files.insuranceFile[0] : null;
+  upload.fields([
+    { name: 'certFile', maxCount: 1 },
+    { name: 'insuranceFile', maxCount: 1 },
+    { name: 'formScreenshots', maxCount: 10 }
+  ]),
+  async (req, res) => {
+    const data = req.body;
+    const files = req.files || {};
+    const certFile = files.certFile && files.certFile[0] ? files.certFile[0] : null;
+    const insuranceFile = files.insuranceFile && files.insuranceFile[0] ? files.insuranceFile[0] : null;
+    const formScreenshots = files.formScreenshots || [];
 
-      let danInfo = null;
-      if (insuranceFile && insuranceFile.mimetype && insuranceFile.mimetype.startsWith('image/')) {
+    if (!data.email) {
+      return res.status(400).json({ error: 'Member email is required.' });
+    }
+
+    if (!data.memberSignature || !data.memberPrintName) {
+      return res.status(400).json({
+        error: 'Printed name and signature are required.'
+      });
+    }
+
+    if (
+      data.memberSignature.trim().toLowerCase() !==
+      data.memberPrintName.trim().toLowerCase()
+    ) {
+      return res.status(400).json({
+        error: 'Electronic signature must match the printed member name.'
+      });
+    }
+
+    if (data.agreeLiability !== 'on') {
+      return res.status(400).json({
+        error: 'You must agree to the liability release before submitting.'
+      });
+    }
+
+    let danInfo = null;
+    try {
+      if (
+        insuranceFile &&
+        insuranceFile.mimetype &&
+        insuranceFile.mimetype.startsWith('image/')
+      ) {
         danInfo = await extractDanInfoFromInsurance(
           insuranceFile.buffer,
           data.memberPrintName || data.name || ''
         );
       }
-  
-  
-      if (!data.email) {
-        return res.status(400).json({ error: 'Member email is required.' });
-      }
-  
-      try {
-        const pdfBufferClub = await generateContractPdf(data, { includeCover: true });
-        const pdfBufferMember = await generateContractPdf(data, { includeCover: false });
-        const filenameSafeName = (data.memberPrintName || data.name || 'Member')
-          .replace(/[^a-z0-9]/gi, '_');
-  
-        const emailText = `
-          SFDI Membership form submitted.
-          
-          Member: ${data.memberPrintName || data.name}
-          Email: ${data.email}
-          Phone(s): ${data.phones}
-          Under 18: ${data.under18 || 'No'}
-          Parent/Guardian Email: ${data.guardianEmail || 'N/A'}
-          Parent/Guardian Name: ${data.guardianPrintName || 'N/A'}
-          Parent/Guardian Signature: ${data.guardianSignature || 'N/A'}
-          Family Administrator Email: ${data.familyAdminEmail || 'N/A'}
-          
-          A PDF copy of the signed membership agreement is attached.
-          Uploaded documents:
-          - Dive Certification Card: ${files.certFile ? files.certFile[0].originalname : 'none'}
-          - Proof of Dive Insurance: ${files.insuranceFile ? files.insuranceFile[0].originalname : 'none'}
-          `;
-          
-  
-        // Build attachments array
-        const attachmentsForClub = [
-          {
-            filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-            content: pdfBufferClub
-          }
-        ];
-  
-        if (files.certFile && files.certFile[0]) {
-          attachmentsForClub.push({
-            filename: files.certFile[0].originalname || 'DiveCertification',
-            content: files.certFile[0].buffer
-          });
-        }
-  
-        if (files.insuranceFile && files.insuranceFile[0]) {
-          attachmentsForClub.push({
-            filename: files.insuranceFile[0].originalname || 'DiveInsurance',
-            content: files.insuranceFile[0].buffer
-          });
-        }
-  
-  // Email to SFDI (with all attachments)
-  const mailToClub = {
-    from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
-    to: SFDI_EMAIL,
-    subject: `New Membership Form: ${data.memberPrintName || data.name || 'Unknown Member'}`,
-    text: emailText,
-    attachments: attachmentsForClub
-  };
-  
-  // Email to member (PDF only)
-  const mailToMember = {
-    from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
-    to: data.email,
-    subject: 'Your SFDI Membership Agreement (PDF)',
-    text: 'Thank you for your membership. Your completed agreement is attached as a PDF.',
-    attachments: [
-      {
-        filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-        content: pdfBufferMember
-      }
-    ]
-  };
-  
-  // Email to parent/guardian (PDF only) if provided
-  let mailToGuardian = null;
-  if (data.guardianEmail && data.guardianEmail.trim() !== '') {
-    mailToGuardian = {
-      from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
-      to: data.guardianEmail.trim(),
-      subject: 'SFDI Membership Agreement for Your Child/Dependent (PDF)',
-      text: `You are listed as the parent/guardian for ${data.memberPrintName || data.name}.
-  A copy of the SFDI Yearly Membership Agreement & Complete Liability Release is attached as a PDF for your records.`,
-      attachments: [
-        {
-          filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-          content: pdfBufferMember
-        }
-      ]
-    };
-  }
-  // OPTIONAL: Email to family administrator (PDF only) if provided
-  let mailToFamilyAdmin = null;
-  if (data.familyAdminEmail && data.familyAdminEmail.trim() !== '') {
-    mailToFamilyAdmin = {
-      from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
-      to: data.familyAdminEmail.trim(),
-      subject: 'SFDI Membership Agreement (Family Membership Administrator Copy)',
-      text: `You are listed as the family administrator for the SFDI membership of ${data.memberPrintName || data.name}.
-  A copy of the SFDI Yearly Membership Agreement & Complete Liability Release is attached as a PDF for your records.`,
-      attachments: [
-        {
-          filename: `SFDI-Membership-${filenameSafeName}.pdf`,
-          content: pdfBufferMember
-        }
-      ]
-    };
-  }
-  
-  
-  // Send emails
-  await transporter.sendMail(mailToClub);
-  await transporter.sendMail(mailToMember);
-  if (mailToGuardian) {
-    await transporter.sendMail(mailToGuardian);
-  }
-  if (mailToFamilyAdmin) {
-    await transporter.sendMail(mailToFamilyAdmin);
-  }
-  
-  // Store submission in PostgreSQL for admin dashboard
-  try {
-    await pool.query(
-      `
+
+      const pdfBufferClub = await generateContractPdf(data, {
+        includeCover: true,
+        formScreenshots
+      });
+
+      const pdfBufferMember = await generateContractPdf(data, {
+        includeCover: false,
+        formScreenshots
+      });
+
+      const filenameSafeName = (data.memberPrintName || data.name || 'Member')
+        .replace(/[^a-z0-9]/gi, '_');
+
+      const legalTextSnapshot = buildContractText(data);
+
+      const submissionIp =
+        req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+        req.socket?.remoteAddress ||
+        null;
+
+      const userAgent = req.get('user-agent') || null;
+      const agreementVersion = 'SFDI-2026-03-13-v1';
+
+      // 1) Save main submission and get new ID
+      const insertSubmissionResult = await pool.query(
+        `
         INSERT INTO submissions (
           member_name,
           member_email,
@@ -753,14 +803,27 @@ app.post('/submit-membership',
           application_type,
           payment_method,
           payment_amount,
+          address1,
+          address2,
+          city_state_zip,
+          publish_contact,
           under18,
           guardian_email,
+          guardian_print_name,
+          guardian_signature,
           family_admin_email,
           cert_agency,
           cert_level,
           cert_number,
+          cert_date,
+          medical_problems,
+          insurance_carrier,
+          insurance_type,
           phones,
           dob,
+          agree_liability,
+          member_signature,
+          signature_date,
           cert_file,
           cert_file_name,
           cert_file_mime,
@@ -768,52 +831,208 @@ app.post('/submit-membership',
           insurance_file_name,
           insurance_file_mime,
           dan_id,
-          dan_expiration_date
+          dan_expiration_date,
+          submission_ip,
+          user_agent,
+          agreement_version,
+          legal_text_snapshot,
+          signed_at
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-          $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+          $1, $2, $3, $4, $5, $6,
+          $7, $8, $9, $10,
+          $11, $12, $13, $14,
+          $15,
+          $16, $17, $18, $19, $20,
+          $21, $22,
+          $23, $24,
+          $25, $26, $27,
+          $28, $29, $30, $31, $32, $33,
+          $34, $35,
+          $36, $37, $38, $39, $40
         )
-      `,
-      [
-        data.memberPrintName || data.name || '',
-        data.email || '',
-        data.membershipType || '',
-        data.applicationType || '',
-        data.paymentMethod || '',
-        data.paymentAmount || 0,
-        data.under18 || 'No',
-        data.guardianEmail || '',
-        data.familyAdminEmail || '',
-        data.certAgency || '',
-        data.certLevel || '',
-        data.certCardNumber || '',
-        data.phones || '',
-        data.dob || null,
-        certFile ? certFile.buffer : null,
-        certFile ? certFile.originalname : null,
-        certFile ? certFile.mimetype : null,
-        insuranceFile ? insuranceFile.buffer : null,
-        insuranceFile ? insuranceFile.originalname : null,
-        insuranceFile ? insuranceFile.mimetype : null,
-        danInfo ? danInfo.danId : null,
-        danInfo ? danInfo.danExpirationDate : null
-      ]
-    );
-  } catch (dbErr) {
-    console.error('Error saving submission to DB:', dbErr);
-    return res.status(500).json({
-      error: 'Form email was sent, but saving to the database failed.'
-    });
-  }
+        RETURNING id
+        `,
+        [
+          data.memberPrintName || data.name || '',
+          data.email || '',
+          data.membershipType || '',
+          data.applicationType || '',
+          data.paymentMethod || '',
+          data.paymentAmount || 0,
+          data.address1 || '',
+          data.address2 || '',
+          data.cityStateZip || '',
+          data.publishContact || '',
+          data.under18 || 'No',
+          data.guardianEmail || '',
+          data.guardianPrintName || '',
+          data.guardianSignature || '',
+          data.familyAdminEmail || '',
+          data.certAgency || '',
+          data.certLevel || '',
+          data.certCardNumber || '',
+          data.certDate || null,
+          data.medicalProblems || '',
+          data.insuranceCarrier || '',
+          data.insuranceType || '',
+          data.phones || '',
+          data.dob || null,
+          data.agreeLiability === 'on',
+          data.memberSignature || '',
+          data.signatureDate || null,
+          certFile ? certFile.buffer : null,
+          certFile ? certFile.originalname : null,
+          certFile ? certFile.mimetype : null,
+          insuranceFile ? insuranceFile.buffer : null,
+          insuranceFile ? insuranceFile.originalname : null,
+          insuranceFile ? insuranceFile.mimetype : null,
+          danInfo ? danInfo.danId : null,
+          danInfo ? danInfo.danExpirationDate : null,
+          submissionIp,
+          userAgent,
+          agreementVersion,
+          legalTextSnapshot,
+          new Date()
+        ]
+      );
 
-  res.json({ message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.' });
- } catch (err) {
-        console.error('Error sending email:', err);
-        res.status(500).json({ error: 'There was an error sending the email with the PDF and attachments.' });
+      const submissionId = insertSubmissionResult.rows[0].id;
+
+      // 2) Save screenshots in separate table
+      for (const shot of formScreenshots) {
+        await pool.query(
+          `
+          INSERT INTO submission_form_screenshots (
+            submission_id,
+            image_data,
+            file_name,
+            mime_type
+          )
+          VALUES ($1, $2, $3, $4)
+          `,
+          [
+            submissionId,
+            shot.buffer,
+            shot.originalname || 'form-screenshot.png',
+            shot.mimetype || 'image/png'
+          ]
+        );
       }
+
+      const emailText = `
+SFDI Membership form submitted.
+
+Member: ${data.memberPrintName || data.name}
+Email: ${data.email}
+Phone(s): ${data.phones}
+Under 18: ${data.under18 || 'No'}
+Parent/Guardian Email: ${data.guardianEmail || 'N/A'}
+Parent/Guardian Name: ${data.guardianPrintName || 'N/A'}
+Parent/Guardian Signature: ${data.guardianSignature || 'N/A'}
+Family Administrator Email: ${data.familyAdminEmail || 'N/A'}
+
+A PDF copy of the signed membership agreement is attached.
+Uploaded documents:
+- Dive Certification Card: ${certFile ? certFile.originalname : 'none'}
+- Proof of Dive Insurance: ${insuranceFile ? insuranceFile.originalname : 'none'}
+- Form Screenshots: ${formScreenshots.length}
+Submission ID: ${submissionId}
+`;
+
+      const attachmentsForClub = [
+        {
+          filename: `SFDI-Membership-${filenameSafeName}.pdf`,
+          content: pdfBufferClub
+        }
+      ];
+
+      if (certFile) {
+        attachmentsForClub.push({
+          filename: certFile.originalname || 'DiveCertification',
+          content: certFile.buffer
+        });
+      }
+
+      if (insuranceFile) {
+        attachmentsForClub.push({
+          filename: insuranceFile.originalname || 'DiveInsurance',
+          content: insuranceFile.buffer
+        });
+      }
+
+      const mailToClub = {
+        from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+        to: SFDI_EMAIL,
+        subject: `New Membership Form: ${data.memberPrintName || data.name || 'Unknown Member'}`,
+        text: emailText,
+        attachments: attachmentsForClub
+      };
+
+      const mailToMember = {
+        from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+        to: data.email,
+        subject: 'Your SFDI Membership Agreement (PDF)',
+        text: 'Thank you for your membership. Your completed agreement is attached as a PDF.',
+        attachments: [
+          {
+            filename: `SFDI-Membership-${filenameSafeName}.pdf`,
+            content: pdfBufferMember
+          }
+        ]
+      };
+
+      let mailToGuardian = null;
+      if (data.guardianEmail && data.guardianEmail.trim() !== '') {
+        mailToGuardian = {
+          from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+          to: data.guardianEmail.trim(),
+          subject: 'SFDI Membership Agreement for Your Child/Dependent (PDF)',
+          text: `You are listed as the parent/guardian for ${data.memberPrintName || data.name}.
+A copy of the SFDI Yearly Membership Agreement & Complete Liability Release is attached as a PDF for your records.`,
+          attachments: [
+            {
+              filename: `SFDI-Membership-${filenameSafeName}.pdf`,
+              content: pdfBufferMember
+            }
+          ]
+        };
+      }
+
+      let mailToFamilyAdmin = null;
+      if (data.familyAdminEmail && data.familyAdminEmail.trim() !== '') {
+        mailToFamilyAdmin = {
+          from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
+          to: data.familyAdminEmail.trim(),
+          subject: 'SFDI Membership Agreement (Family Membership Administrator Copy)',
+          text: `You are listed as the family administrator for the SFDI membership of ${data.memberPrintName || data.name}.
+A copy of the SFDI Yearly Membership Agreement & Complete Liability Release is attached as a PDF for your records.`,
+          attachments: [
+            {
+              filename: `SFDI-Membership-${filenameSafeName}.pdf`,
+              content: pdfBufferMember
+            }
+          ]
+        };
+      }
+
+      await transporter.sendMail(mailToClub);
+      await transporter.sendMail(mailToMember);
+      if (mailToGuardian) await transporter.sendMail(mailToGuardian);
+      if (mailToFamilyAdmin) await transporter.sendMail(mailToFamilyAdmin);
+
+      return res.json({
+        message: 'Form submitted successfully. PDF contract and uploaded documents have been emailed.',
+        submissionId
+      });
+    } catch (err) {
+      console.error('Error submitting membership:', err);
+      return res.status(500).json({
+        error: 'There was an error submitting the form.'
+      });
     }
-  );
+  }
+);
 
 //Member portal (check if email exists, hash the password, update row in member accounts)
 app.post('/member/set-password', bodyParser.urlencoded({ extended: true }), async (req, res) => {
@@ -1214,6 +1433,7 @@ app.post('/member/documents',
         files.insuranceFile && files.insuranceFile[0]
           ? files.insuranceFile[0]
           : null;
+
 
       // If no files provided, just redirect back
       if (!certFile && !insuranceFile) {
