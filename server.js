@@ -720,15 +720,17 @@ app.post('/treasurer/update-payment', async (req, res) => {
 
 // Route to handle form submission WITH FILES
 app.post('/submit-membership',
-  console.log('--- /submit-membership HIT ---');
-  console.log('req.body:', req.body);
-  console.log('req.files keys:', Object.keys(req.files || {}));
+  
   upload.fields([
     { name: 'certFile', maxCount: 1 },
     { name: 'insuranceFile', maxCount: 1 },
     { name: 'formScreenshots', maxCount: 10 }
   ]),
   async (req, res) => {
+    console.log('--- /submit-membership HIT ---');
+    console.log('req.body:', req.body);
+    console.log('req.files keys:', Object.keys(req.files || {}));
+
     const data = req.body;
     const files = req.files || {};
     const certFile = files.certFile && files.certFile[0] ? files.certFile[0] : null;
@@ -754,18 +756,15 @@ app.post('/submit-membership',
       });
     }
 
-    const agreed =
-    data.agreeLiability === 'on' ||
-    data.agreeLiability === 'true' ||
-    data.agreeLiability === 'yes' ||
-    data.agreeLiability === '1' ||
-    data.agreeLiability === true;
-  
-  if (!agreed) {
-    return res.status(400).json({
-      error: 'You must agree to the liability release before submitting.'
-    });
-  }
+    const agreed = String(data.agreeLiability || '').toLowerCase();
+
+    console.log('agreeLiability raw value =', data.agreeLiability);
+    
+    if (!['on', 'yes', 'true', '1'].includes(agreed)) {
+      return res.status(400).json({
+        error: 'You must agree to the liability release before submitting.'
+      });
+    }
 
     let danInfo = null;
     try {
