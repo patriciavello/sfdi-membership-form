@@ -720,6 +720,9 @@ app.post('/treasurer/update-payment', async (req, res) => {
 
 // Route to handle form submission WITH FILES
 app.post('/submit-membership',
+  console.log('--- /submit-membership HIT ---');
+  console.log('req.body:', req.body);
+  console.log('req.files keys:', Object.keys(req.files || {}));
   upload.fields([
     { name: 'certFile', maxCount: 1 },
     { name: 'insuranceFile', maxCount: 1 },
