@@ -643,12 +643,16 @@ function generateContractPdf(data, options = {}) {
         doc.text(`Member Email: ${data.email || 'N/A'}`);
         doc.text(`Phone(s): ${data.phones || 'N/A'}`);
         doc.text(`DOB: ${formatDate(data.dob)}`);
+        doc.text(`Address Line 1: ${data.address1 || 'N/A'}`);
+        doc.text(`Address Line 2: ${data.address2 || 'N/A'}`);
+        doc.text(`City, State and Zip: ${data.cityStateZip || 'N/A'}`);
         doc.moveDown(0.8);
 
         doc.text(`Membership Type: ${data.membershipType || 'N/A'}`);
         doc.text(`Application Type: ${data.applicationType || 'N/A'}`);
         doc.text(`Payment Method: ${data.paymentMethod || 'N/A'}`);
         doc.text(`Payment Amount: ${data.paymentAmount || 'N/A'}`);
+        doc.text(`May publish phone and email to club members: ${data.publishContact || 'N/A'}`);
         doc.moveDown(0.8);
 
         doc.text(`Under 18: ${data.under18 || 'N/A'}`);
@@ -660,6 +664,13 @@ function generateContractPdf(data, options = {}) {
         doc.text(`Agency: ${data.certAgency || 'N/A'}`);
         doc.text(`Level: ${data.certLevel || 'N/A'}`);
         doc.text(`Certification Number: ${data.certCardNumber || 'N/A'}`);
+        doc.text(`Certification Date: ${formatDate(data.certDate)}`);
+        doc.moveDown(0.8);
+
+        doc.text('Diving Insurance', { underline: true });
+        doc.text(`Carrier: ${data.insuranceCarrier || 'N/A'}`);
+        doc.text(`Type: ${data.insuranceType || 'N/A'}`);
+        doc.text(`Expiration Date: ${formatDate(data.danExpirationDate)}`);
 
         doc.addPage();
       }
@@ -1574,12 +1585,19 @@ app.post('/admin/resend-files', async (req, res) => {
         application_type,
         payment_method,
         payment_amount,
+        address1,
+        address2,
+        city_state_zip,
+        publish_contact,
         under18,
         guardian_email,
         family_admin_email,
         cert_agency,
         cert_level,
         cert_number,
+        cert_date,
+        insurance_carrier,
+        insurance_type,
         phones,
         dob,
         cert_file,
@@ -1618,12 +1636,19 @@ app.post('/admin/resend-files', async (req, res) => {
       applicationType: sub.application_type,
       paymentMethod: sub.payment_method,
       paymentAmount: sub.payment_amount ? String(sub.payment_amount) : '',
+      address1: sub.address1,
+      address2: sub.address2,
+      cityStateZip: sub.city_state_zip,
+      publishContact: sub.publish_contact,
       under18: sub.under18,
       guardianEmail: sub.guardian_email,
       familyAdminEmail: sub.family_admin_email,
       certAgency: sub.cert_agency,
       certLevel: sub.cert_level,
       certCardNumber: sub.cert_number,
+      certDate: sub.cert_date ? String(sub.cert_date) : '',
+      insuranceCarrier: sub.insurance_carrier,
+      insuranceType: sub.insurance_type,
       danId: sub.dan_id,
       danExpirationDate: sub.dan_expiration_date ? String(sub.dan_expiration_date) : ''
     };
