@@ -302,14 +302,22 @@ a<!DOCTYPE html>
         <input type="text" name="insuranceType" required>
       </label>
 
-      <p class="small-text warning-text">
-        PLEASE ATTACH PROOF OF DIVE INSURANCE.
-      </p>
-      <!-- NEW: insurance proof file upload -->
-      <label>
-        Upload Proof of Dive Insurance:
-        <input type="file" name="insuranceFile" accept="image/*,application/pdf">
-      </label>
+      <fieldset>
+        <legend>Dive Status</legend>
+        <label><input type="radio" name="diveStatus" value="Active" checked required> Active</label>
+        <label><input type="radio" name="diveStatus" value="Retired (no longer dive)"> Retired (no longer dive)</label>
+      </fieldset>
+
+      <div id="insuranceProofSection">
+        <p class="small-text warning-text">
+          PLEASE ATTACH PROOF OF DIVE INSURANCE.
+        </p>
+        <!-- NEW: insurance proof file upload -->
+        <label>
+          Upload Proof of Dive Insurance:
+          <input type="file" name="insuranceFile" accept="image/*,application/pdf" required>
+        </label>
+      </div>
     </fieldset>
 
     <!-- Liability text + agreement -->
@@ -539,6 +547,9 @@ COMPLETE BAR TO LITIGATION.
       const paymentAmountInput = document.querySelector('input[name="paymentAmount"]');
       const familyAdminSection = document.getElementById('familyAdminSection');
       const familyAdminEmailInput = document.querySelector('[name="familyAdminEmail"]');
+      const diveStatusRadios = document.querySelectorAll('input[name="diveStatus"]');
+      const insuranceProofSection = document.getElementById('insuranceProofSection');
+      const insuranceFileInput = document.querySelector('input[name="insuranceFile"]');
     
       function updateGuardianSection(value) {
         if (value === 'Yes') {
@@ -570,6 +581,20 @@ COMPLETE BAR TO LITIGATION.
           }
         }
       }
+
+      function updateInsuranceProofVisibility() {
+        const selectedStatus = Array.from(diveStatusRadios).find(r => r.checked)?.value;
+        const isRetired = selectedStatus === 'Retired (no longer dive)';
+
+        if (insuranceProofSection) {
+          insuranceProofSection.hidden = isRetired;
+        }
+
+        if (insuranceFileInput) {
+          insuranceFileInput.required = !isRetired;
+          if (isRetired) insuranceFileInput.value = '';
+        }
+      }
     
       under18Radios.forEach(radio => {
         radio.addEventListener('change', function () {
@@ -591,8 +616,13 @@ COMPLETE BAR TO LITIGATION.
       if (paymentAmountInput) {
         paymentAmountInput.addEventListener('input', updateFamilyAdminVisibility);
       }
+
+      diveStatusRadios.forEach(radio => {
+        radio.addEventListener('change', updateInsuranceProofVisibility);
+      });
     
       updateFamilyAdminVisibility();
+      updateInsuranceProofVisibility();
     
       membershipForm.addEventListener('submit', async function (e) {
         e.preventDefault();
@@ -621,6 +651,7 @@ COMPLETE BAR TO LITIGATION.
             membershipForm.reset();
             updateGuardianSection('No');
             updateFamilyAdminVisibility();
+            updateInsuranceProofVisibility();
           } else {
             formMessage.className = 'message error';
             formMessage.textContent = result.error || 'There was a problem submitting the form.';

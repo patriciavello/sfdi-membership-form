@@ -97,6 +97,7 @@ async function initDb() {
 
         insurance_carrier TEXT,
         insurance_type TEXT,
+        dive_status TEXT,
 
         phones TEXT,
         dob DATE,
@@ -168,6 +169,7 @@ async function initDb() {
 
     await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS insurance_carrier TEXT`);
     await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS insurance_type TEXT`);
+    await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS dive_status TEXT`);
 
     await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS phones TEXT`);
     await pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS dob DATE`);
@@ -670,6 +672,7 @@ function generateContractPdf(data, options = {}) {
         doc.text('Diving Insurance', { underline: true });
         doc.text(`Carrier: ${data.insuranceCarrier || 'N/A'}`);
         doc.text(`Type: ${data.insuranceType || 'N/A'}`);
+        doc.text(`Dive Status: ${data.diveStatus || 'N/A'}`);
         doc.text(`Expiration Date: ${formatDate(data.danExpirationDate)}`);
 
         doc.addPage();
@@ -750,6 +753,14 @@ app.post('/submit-membership',
 
     if (!data.email) {
       return res.status(400).json({ error: 'Member email is required.' });
+    }
+
+    const isRetiredDiver = (data.diveStatus || '').toLowerCase().includes('retired');
+
+    if (!isRetiredDiver && !insuranceFile) {
+      return res.status(400).json({
+        error: 'Proof of dive insurance is required unless dive status is retired.'
+      });
     }
 
     if (!data.memberSignature || !data.memberPrintName) {
@@ -839,6 +850,7 @@ app.post('/submit-membership',
           medical_problems,
           insurance_carrier,
           insurance_type,
+          dive_status,
           phones,
           dob,
           agree_liability,
@@ -864,12 +876,12 @@ app.post('/submit-membership',
           $11, $12, $13, $14,
           $15,
           $16, $17, $18, $19, $20,
-          $21, $22,
-          $23, $24,
-          $25, $26, $27,
-          $28, $29, $30, $31, $32, $33,
-          $34, $35,
-          $36, $37, $38, $39, $40
+          $21, $22, $23,
+          $24, $25,
+          $26, $27, $28,
+          $29, $30, $31, $32, $33, $34,
+          $35, $36,
+          $37, $38, $39, $40, $41
         )
         RETURNING id
         `,
@@ -896,6 +908,7 @@ app.post('/submit-membership',
           data.medicalProblems || '',
           data.insuranceCarrier || '',
           data.insuranceType || '',
+          data.diveStatus || '',
           data.phones || '',
           data.dob || null,
           data.agreeLiability === 'on',
@@ -1598,6 +1611,7 @@ app.post('/admin/resend-files', async (req, res) => {
         cert_date,
         insurance_carrier,
         insurance_type,
+        dive_status,
         phones,
         dob,
         cert_file,
@@ -1618,11 +1632,12 @@ app.post('/admin/resend-files', async (req, res) => {
     }
 
     const sub = result.rows[0];
+    const isRetiredDiver = (sub.dive_status || '').toLowerCase().includes('retired');
 
-    if (!sub.cert_file || !sub.insurance_file) {
+    if (!sub.cert_file || (!isRetiredDiver && !sub.insurance_file)) {
       return res.status(400).json({
         success: false,
-        error: 'Missing stored certification and/or insurance file for this submission.'
+        error: 'Missing stored certification and/or required insurance file for this submission.'
       });
     }
 
@@ -1649,6 +1664,7 @@ app.post('/admin/resend-files', async (req, res) => {
       certDate: sub.cert_date ? String(sub.cert_date) : '',
       insuranceCarrier: sub.insurance_carrier,
       insuranceType: sub.insurance_type,
+      diveStatus: sub.dive_status,
       danId: sub.dan_id,
       danExpirationDate: sub.dan_expiration_date ? String(sub.dan_expiration_date) : ''
     };
@@ -1661,18 +1677,24 @@ app.post('/admin/resend-files', async (req, res) => {
         filename: `SFDI-Membership-${filenameSafeName}.pdf`,
         content: pdfBufferClub,
         contentType: 'application/pdf'
-      },
-      {
+      }
+    ];
+
+    if (sub.insurance_file) {
+      attachments.push({
         filename: sub.insurance_file_name || 'DiveInsurance',
         content: sub.insurance_file,
         contentType: sub.insurance_file_mime || 'application/octet-stream'
-      },
-      {
-        filename: sub.cert_file_name || 'DiveCertification',
-        content: sub.cert_file,
-        contentType: sub.cert_file_mime || 'application/octet-stream'
-      }
-    ];
+      });
+    }
+
+    attachments.push({
+      filename: sub.cert_file_name || 'DiveCertification',
+      content: sub.cert_file,
+      contentType: sub.cert_file_mime || 'application/octet-stream'
+    });
+
+    const attachedFileNames = attachments.map(attachment => attachment.filename).join(', ');
 
     await transporter.sendMail({
       from: '"SFDI Membership Form" <sfdipvello@gmail.com>',
@@ -1683,7 +1705,7 @@ app.post('/admin/resend-files', async (req, res) => {
         `Member: ${sub.member_name || ''}\n` +
         `Email: ${sub.member_email || ''}\n` +
         `Submission ID: ${sub.id}\n\n` +
-        `Attached: Contract (with cover), Insurance, Certification.`,
+        `Attached: ${attachedFileNames}.`,
       attachments
     });
 
@@ -2110,6 +2132,7 @@ app.get('/admin', async (req, res) => {
           cert_agency,
           cert_level,
           phones,
+          dive_status,
           insurance_verified,
           dan_expiration_date,
           payment_received,
@@ -2130,7 +2153,7 @@ app.get('/admin', async (req, res) => {
     )
     .map(sub => {
         if (!sub.created_at) {
-          return `<tr><td colspan="13" style="text-align:center;">No submissions yet.</td></tr>`;
+          return `<tr><td colspan="20" style="text-align:center;">No submissions yet.</td></tr>`;
         }
   
       const date = new Date(sub.created_at).toLocaleString('en-US', {
@@ -2152,6 +2175,7 @@ app.get('/admin', async (req, res) => {
             <td>${sub.cert_agency || ''}</td>
             <td>${sub.cert_level || ''}</td>
             <td>${sub.phones || ''}</td>
+            <td>${sub.dive_status || ''}</td>
             <td>${sub.dan_expiration_date || 'N/A'}</td>
 
             <!-- NEW: Insurance card thumbnail -->
@@ -2288,6 +2312,7 @@ app.get('/admin', async (req, res) => {
                   <th>Cert Agency</th>
                   <th>Cert Level</th>
                   <th>Phones</th>
+                  <th>Dive Status</th>
                   <th> Insurance Exp. date</th>
                   <th>Insurance Card</th>
                   <!-- NEW -->
